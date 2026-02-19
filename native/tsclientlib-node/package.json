@@ -1,0 +1,12 @@
+{
+  "name": "@respeak/tsclientlib-node",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.js",
+  "types": "index.d.ts",
+  "scripts": {
+    "build:native": "cargo build --manifest-path Cargo.toml",
+    "prepare:native": "node scripts/prepare-native.js",
+    "demo": "node --experimental-strip-types examples/simple.ts"
+  }
+}

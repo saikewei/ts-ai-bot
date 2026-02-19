@@ -1,0 +1,45 @@
+{
+	"folders": [
+		{
+			"path": ".",
+			"name": "Node Root"
+		},
+		{
+			"path": "native/tsclientlib-node",
+			"name": "Native Addon"
+		},
+		{
+			"path": "rust/tsclientlib",
+			"name": "Rust Clientlib"
+		},
+		{
+			"path": "rust/tsproto",
+			"name": "Rust Protocol"
+		},
+		{
+			"path": "rust/utils/ts-bookkeeping",
+			"name": "Bookkeeping"
+		},
+		{
+			"path": "rust/utils/tsproto-structs",
+			"name": "TSP Structs"
+		},
+		{
+			"path": "rust/utils/tsproto-types",
+			"name": "TSP Types"
+		},
+		{
+			"path": "rust/utils/tsproto-packets",
+			"name": "TSP Packets"
+		},
+		{
+			"path": "rust/target",
+			"name": "Rust Target"
+		},
+		{
+			"path": "native/tsclientlib-node/target",
+			"name": "Native Target"
+		}
+	],
+	"settings": {}
+}

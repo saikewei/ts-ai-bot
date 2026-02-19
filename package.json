@@ -1,0 +1,20 @@
+{
+  "name": "tsclientlib-node-dev",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Node-first workspace for tsclientlib napi bindings and TypeScript apps.",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "scripts": {
+    "build:native": "cargo build --manifest-path native/tsclientlib-node/Cargo.toml",
+    "prepare:native": "node native/tsclientlib-node/scripts/prepare-native.js",
+    "build": "npm run build:native && npm run prepare:native && tsc -p tsconfig.json",
+    "dev": "tsx src/main.ts",
+    "demo:native": "node --experimental-strip-types native/tsclientlib-node/examples/simple.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "@types/node": "^24.3.1"
+  }
+}
