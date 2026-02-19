@@ -14,10 +14,22 @@ async function main() {
   });
 
   console.log('Node API ready. Fill in connection params before running connect().');
-  void client;
+  console.log('Auto-exit in 500ms...');
+
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, 500);
+  });
+
+  if (client.isConnected()) {
+    await client.disconnect({ message: 'main.ts demo done' });
+  }
+
+  const nodeProcess = (
+    globalThis as { process?: { exit: (code?: number) => never } }
+  ).process;
+  nodeProcess?.exit(0);
 }
 
 main().catch((err) => {
   console.error(err);
-  process.exitCode = 1;
 });
