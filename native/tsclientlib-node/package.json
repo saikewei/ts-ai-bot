@@ -7,6 +7,7 @@
   "scripts": {
     "build:native": "cargo build --manifest-path Cargo.toml",
     "prepare:native": "node scripts/prepare-native.js",
-    "demo": "node --experimental-strip-types examples/simple.ts"
+    "demo": "node --experimental-strip-types examples/simple.ts",
+    "demo:text": "node --experimental-strip-types examples/text_chat.ts"
   }
 }

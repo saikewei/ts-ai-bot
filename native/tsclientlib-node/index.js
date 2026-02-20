@@ -66,6 +66,14 @@ class TeamSpeakClient extends EventEmitter {
     this._native.pushFrame(frame);
   }
 
+  async sendTextMessage(params) {
+    await this._native.sendTextMessage({
+      target: params?.target,
+      message: params?.message,
+      client_id: params?.clientId,
+    });
+  }
+
   isConnected() {
     return this._native.isConnected();
   }

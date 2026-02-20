@@ -16,8 +16,9 @@ use napi_derive::napi;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{self, Duration, MissedTickBehavior};
 use tsclientlib::audio::AudioHandler;
+use tsclientlib::events::Event;
 use tsclientlib::sync::{SyncConnection, SyncStreamItem};
-use tsclientlib::{ClientId, Connection, DisconnectOptions, Identity};
+use tsclientlib::{ClientId, Connection, DisconnectOptions, Identity, MessageTarget};
 use tsproto_packets::packets::{AudioData, CodecType, Direction, InAudioBuf, OutAudio};
 
 const SAMPLE_RATE: usize = 48_000;
@@ -35,6 +36,11 @@ struct NativeEvent {
 
 enum ControlMessage {
   PushFrame(Vec<i16>),
+  SendTextMessage {
+    target: MessageTarget,
+    message: String,
+    done: oneshot::Sender<Result<(), String>>,
+  },
   Disconnect {
     message: Option<String>,
     done: oneshot::Sender<Result<(), String>>,
@@ -56,6 +62,13 @@ pub struct ConnectOptions {
 pub struct DisconnectParams {
   pub message: Option<String>,
   pub reason_code: Option<u32>,
+}
+
+#[napi(object)]
+pub struct SendTextMessageParams {
+  pub target: String,
+  pub message: String,
+  pub client_id: Option<u32>,
 }
 
 #[napi]
@@ -220,6 +233,44 @@ impl TeamSpeakClient {
     })
   }
 
+  #[napi(js_name = "sendTextMessage")]
+  pub async fn send_text_message(&self, params: SendTextMessageParams) -> napi::Result<()> {
+    self.refresh_worker_state();
+
+    let tx = {
+      let guard = self.control_tx.lock().expect("control mutex poisoned");
+      guard.clone()
+    };
+
+    let Some(tx) = tx else {
+      return Err(Error::new(Status::InvalidArg, "Not connected".to_string()));
+    };
+
+    let target = parse_message_target(
+      &params.target,
+      params.client_id,
+    )
+    .map_err(|e| Error::new(Status::InvalidArg, e))?;
+
+    let (done_tx, done_rx) = oneshot::channel();
+    tx.send(ControlMessage::SendTextMessage {
+      target,
+      message: params.message,
+      done: done_tx,
+    })
+    .await
+    .map_err(|_| Error::new(Status::GenericFailure, "Connection worker is not running".to_string()))?;
+
+    match done_rx.await {
+      Ok(Ok(())) => Ok(()),
+      Ok(Err(e)) => Err(Error::new(Status::GenericFailure, e)),
+      Err(_) => Err(Error::new(
+        Status::GenericFailure,
+        "Send text message interrupted".to_string(),
+      )),
+    }
+  }
+
   #[napi(js_name = "isConnected")]
   pub fn is_connected(&self) -> bool {
     self.connected.load(Ordering::SeqCst)
@@ -351,6 +402,34 @@ async fn run_client(
               }
             }
           }
+          ControlMessage::SendTextMessage { target, message, done } => {
+            let cmd = match sync_con.get_state() {
+              Ok(state) => state.send_message(target, &message),
+              Err(e) => {
+                let msg = format!("{e}");
+                let _ = done.send(Err(msg.clone()));
+                emit_error(&event_tsfn, "E_SEND_TEXT_MESSAGE", &msg);
+                continue;
+              }
+            };
+
+            // Use SyncConnectionHandle::send_command so we can wait for the server
+            // return_code and surface permission/validation failures to JS.
+            let mut handle = sync_con.get_handle();
+            let event_tsfn = event_tsfn.clone();
+            tokio::spawn(async move {
+              match handle.send_command(cmd).await {
+                Ok(()) => {
+                  let _ = done.send(Ok(()));
+                }
+                Err(e) => {
+                  let msg = format!("{e}");
+                  let _ = done.send(Err(msg.clone()));
+                  emit_error(&event_tsfn, "E_SEND_TEXT_MESSAGE", &msg);
+                }
+              }
+            });
+          }
           ControlMessage::Disconnect { message, done } => {
             let mut options = DisconnectOptions::new();
             if let Some(message) = message {
@@ -473,7 +552,7 @@ async fn handle_stream_item(
   speaker_handlers: &mut HashMap<ClientId, AudioHandler<ClientId>>,
 ) {
   match item {
-    SyncStreamItem::BookEvents(_) => {
+    SyncStreamItem::BookEvents(events) => {
       if !connected.swap(true, Ordering::SeqCst) {
         if let Some(tx) = ready_tx.take() {
           let _ = tx.send(Ok(()));
@@ -489,6 +568,7 @@ async fn handle_stream_item(
           serde_json::json!({ "serverName": server_name }),
         );
       }
+      emit_text_message_events(event_tsfn, &events);
     }
     SyncStreamItem::Audio(packet) => {
       handle_incoming_audio(packet, speaker_handlers, event_tsfn);
@@ -509,6 +589,59 @@ fn parse_or_create_identity(input: Option<&str>) -> Result<Identity, String> {
   match input {
     Some(raw) => Identity::new_from_str(raw).map_err(|e| format!("Failed to parse identity: {e}")),
     None => Ok(Identity::create()),
+  }
+}
+
+fn parse_message_target(target: &str, client_id: Option<u32>) -> Result<MessageTarget, String> {
+  match target {
+    "server" => Ok(MessageTarget::Server),
+    "channel" => Ok(MessageTarget::Channel),
+    "client" => {
+      let Some(client_id) = client_id else {
+        return Err("clientId is required when target is 'client'".to_string());
+      };
+      let client_id = u16::try_from(client_id)
+        .map_err(|_| "clientId out of range; expected 0..=65535".to_string())?;
+      Ok(MessageTarget::Client(ClientId(client_id)))
+    }
+    _ => Err("Invalid target; expected 'server', 'channel', or 'client'".to_string()),
+  }
+}
+
+fn emit_text_message_events(event_tsfn: &Arc<Mutex<Option<EventTsfn>>>, events: &[Event]) {
+  for event in events {
+    let Event::Message {
+      target,
+      invoker,
+      message,
+    } = event
+    else {
+      continue;
+    };
+
+    let (target_type, target_client_id) = match target {
+      MessageTarget::Server => ("server", None),
+      MessageTarget::Channel => ("channel", None),
+      MessageTarget::Client(id) => ("client", Some(id.0)),
+      MessageTarget::Poke(id) => ("poke", Some(id.0)),
+    };
+
+    let mut payload = serde_json::json!({
+      "target": target_type,
+      "message": message,
+      "invoker": {
+        "id": invoker.id.0,
+        "name": invoker.name,
+      },
+    });
+    if let Some(target_client_id) = target_client_id {
+      payload["targetClientId"] = serde_json::json!(target_client_id);
+    }
+    if let Some(uid) = invoker.uid.as_ref() {
+      payload["invoker"]["uid"] = serde_json::json!(uid.as_ref().to_string());
+    }
+
+    emit(event_tsfn, "textMessage", payload);
   }
 }
 
