@@ -37,6 +37,33 @@ npm run prepare:native
 npm run dev
 ```
 
+## 环境变量
+
+运行 `src/main.ts` 时会读取以下环境变量：
+
+| 变量名 | 是否必填 | 默认值 | 说明 |
+|---|---|---|---|
+| `OPENROUTER_API_KEY` | 是 | 无 | OpenRouter API Key，用于模型推理（`src/llm.ts`）。 |
+| `AZURE_APIKEY` | 是 | 无 | Azure Speech API Key，用于 TTS（`src/tts.ts`）。 |
+| `AZURE_ENDPOINT` | 是 | 无 | Azure Speech Endpoint，示例：`https://<region>.tts.speech.microsoft.com`（代码会自动拼接 `/cognitiveservices/v1`）。 |
+| `TS_ADDRESS` | 否 | `localhost` | TeamSpeak 服务器地址。 |
+| `TS_PASSWORD` | 否 | 无 | TeamSpeak 服务器密码（有密码时设置）。 |
+| `TS_CHANNEL` | 否 | 无 | 连接后要进入的频道。 |
+| `TS_NICKNAME` | 否 | `ts-audio-llm-demo` | 机器人昵称。 |
+
+示例（Linux/macOS）：
+
+```bash
+export OPENROUTER_API_KEY="..."
+export AZURE_APIKEY="..."
+export AZURE_ENDPOINT="https://<region>.tts.speech.microsoft.com"
+export TS_ADDRESS="localhost"
+export TS_PASSWORD="..."
+export TS_CHANNEL="..."
+export TS_NICKNAME="ts-audio-llm-demo"
+npm run dev
+```
+
 ## Rust 相关
 
 Rust crate 位于 `rust/`，主要作为 Node API 的底层实现。  
