@@ -49,6 +49,25 @@ function stripMarkdownForTts(input: string): string {
 		.trim();
 }
 
+function formatDurationMs(startNs: bigint, endNs: bigint): string {
+	return `${(Number(endNs - startNs) / 1_000_000).toFixed(2)}ms`;
+}
+
+function extractModelText(content: unknown): string {
+	if (typeof content === 'string') return content;
+	if (!Array.isArray(content)) return '';
+	return content
+		.map((part) => {
+			if (typeof part === 'string') return part;
+			if (part && typeof part === 'object' && 'text' in part) {
+				return String((part as { text?: unknown }).text ?? '');
+			}
+			return '';
+		})
+		.join('')
+		.trim();
+}
+
 async function main() {
 	const address = process.env.TS_ADDRESS ?? 'localhost';
 	const password = process.env.TS_PASSWORD;
@@ -101,13 +120,22 @@ async function main() {
 		});
 		const cleaned = stripMarkdownForTts(text);
 		if (!cleaned) return;
+		const ttsGenStart = process.hrtime.bigint();
 		ttsSession.pushText(cleaned);
-		await ttsSession.endInput();
-		for await (const frame of ttsSession.readFrames()) {
-			if (frame.length === 0) continue;
-			await pushFrameWithRetry(frame);
-			await sleep(FRAME_INTERVAL_MS);
+		const playbackPromise = (async () => {
+			for await (const frame of ttsSession.readFrames()) {
+				if (frame.length === 0) continue;
+				await pushFrameWithRetry(frame);
+				await sleep(FRAME_INTERVAL_MS);
+			}
+		})();
+		try {
+			await ttsSession.endInput();
+		} finally {
+			const ttsGenEnd = process.hrtime.bigint();
+			console.log('[timing] tts_generation', formatDurationMs(ttsGenStart, ttsGenEnd));
 		}
+		await playbackPromise;
 	};
 
 	const playStartupTts = async (): Promise<void> => {
@@ -128,14 +156,20 @@ async function main() {
 		console.log('[llm] sending audio to model...', { pcmBytes: pcm.length, wavBytes: wav.length });
 
 		let streamText = '';
-		await inferFromAudioStream(wav, {
+		const llmStart = process.hrtime.bigint();
+		const inference = await inferFromAudioStream(wav, {
 			format: 'wav',
 			prompt: '你是一个无问不答的语音助手。请使用自然、简洁的语言和音频里面的人对话，解答他的所有问题或者满足他的其他要求。',
-			reasoningEnabled: false,
+			reasoningEnabled: true,
 			onTextDelta: (delta) => {
 				streamText += delta;
 			},
 		});
+		const llmEnd = process.hrtime.bigint();
+		console.log('[timing] model_inference', formatDurationMs(llmStart, llmEnd));
+		if (!streamText.trim()) {
+			streamText = extractModelText(inference.message.content);
+		}
 
 		const reply = streamText.trim() || '我听到了，但这次没有生成可用文本。';
 		const parts = splitMessage(reply, MAX_MESSAGE_CHARS);

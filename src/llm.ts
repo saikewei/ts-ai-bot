@@ -430,6 +430,8 @@ export async function inferFromAudioStream(
 
 		let fullText = '';
 		let fullReasoning = '';
+		let finalTextFallback = '';
+		let finalReasoningFallback = '';
 
 		while (true) {
 			const { value, done } = await reader.read();
@@ -452,6 +454,10 @@ export async function inferFromAudioStream(
 							content?: unknown;
 							reasoning_details?: unknown;
 						};
+						message?: {
+							content?: unknown;
+							reasoning_details?: unknown;
+						};
 					}>;
 				};
 				try {
@@ -460,21 +466,43 @@ export async function inferFromAudioStream(
 					continue;
 				}
 
-				const delta = chunk.choices?.[0]?.delta;
-				if (!delta) continue;
+				const choice = chunk.choices?.[0];
+				if (!choice) continue;
 
-				const textDelta = extractDeltaText(delta.content);
-				if (textDelta) {
-					fullText += textDelta;
-					options.onTextDelta?.(textDelta);
+				const delta = choice.delta;
+				if (delta) {
+					const textDelta = extractDeltaText(delta.content);
+					if (textDelta) {
+						fullText += textDelta;
+						options.onTextDelta?.(textDelta);
+					}
+
+					const reasoningDelta = extractDeltaText(delta.reasoning_details);
+					if (reasoningDelta) {
+						fullReasoning += reasoningDelta;
+						options.onReasoningDelta?.(reasoningDelta);
+					}
 				}
 
-				const reasoningDelta = extractDeltaText(delta.reasoning_details);
-				if (reasoningDelta) {
-					fullReasoning += reasoningDelta;
-					options.onReasoningDelta?.(reasoningDelta);
+				const message = choice.message;
+				if (message) {
+					const finalText = extractFinalText(message.content);
+					if (finalText) {
+						finalTextFallback = finalText;
+					}
+					const finalReasoning = extractFinalText(message.reasoning_details);
+					if (finalReasoning) {
+						finalReasoningFallback = finalReasoning;
+					}
 				}
 			}
+		}
+
+		if (!fullText && finalTextFallback) {
+			fullText = finalTextFallback;
+		}
+		if (!fullReasoning && finalReasoningFallback) {
+			fullReasoning = finalReasoningFallback;
 		}
 
 		if (useContext) {
