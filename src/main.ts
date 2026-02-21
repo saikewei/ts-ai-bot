@@ -1,5 +1,5 @@
 import { TeamSpeakClient } from '../index';
-import { inferFromAudioStream, pcm16leToWav } from './llm';
+import { clearLlmContext, inferFromAudioStream, pcm16leToWav } from './llm';
 import { createAzureTtsStreamSession } from './tts';
 
 const SAMPLE_RATE = 48_000;
@@ -7,6 +7,7 @@ const CHANNELS = 1;
 const FRAME_INTERVAL_MS = 20;
 const COMMAND_START = '%b';
 const COMMAND_END = '%e';
+const COMMAND_CLEAR = '%clear';
 const MAX_MESSAGE_CHARS = 450;
 
 type RunState = 'standby' | 'recording' | 'waiting_model';
@@ -185,6 +186,10 @@ async function main() {
 
 	const handleCommand = async (message: string, clientId: number): Promise<void> => {
 		switch (message) {
+			case COMMAND_CLEAR:
+				clearLlmContext();
+				await sendChannelText('[ai-bot]上下文已清除。');
+				break;
 			case COMMAND_START:
 				if (state === 'standby') {
 					if (clientId === 0) {
