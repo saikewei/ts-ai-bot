@@ -37,6 +37,34 @@ npm run prepare:native
 npm run dev
 ```
 
+## Docker
+
+项目支持直接打包为 Docker 镜像。镜像内会：
+
+- 在构建阶段编译 Rust 原生模块
+- 编译 TypeScript 到 `dist/`
+- 运行阶段直接执行 `node dist/main.js`
+
+构建镜像：
+
+```bash
+docker build --no-cache -t ts-ai-bot .
+```
+
+运行容器：
+
+```bash
+docker run --rm \
+  -e OPENROUTER_API_KEY="..." \
+  -e AZURE_APIKEY="..." \
+  -e AZURE_ENDPOINT="https://<region>.tts.speech.microsoft.com" \
+  -e TS_ADDRESS="localhost" \
+  -e TS_PASSWORD="..." \
+  -e TS_CHANNEL="..." \
+  -e TS_NICKNAME="ts-audio-llm-demo" \
+  ts-ai-bot
+```
+
 ## 环境变量
 
 运行 `src/main.ts` 时会读取以下环境变量：

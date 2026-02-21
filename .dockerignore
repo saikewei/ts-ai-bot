@@ -1,0 +1,15 @@
+.git
+.gitignore
+.appveyor
+
+node_modules
+dist
+
+native/tsclientlib-node/target
+native/tsclientlib-node/index.node
+native/tsclientlib-node/*.log
+
+rust/target
+
+*.log
+.DS_Store
