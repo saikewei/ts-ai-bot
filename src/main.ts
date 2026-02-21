@@ -8,6 +8,7 @@ const FRAME_INTERVAL_MS = 20;
 const COMMAND_START = '%b';
 const COMMAND_END = '%e';
 const COMMAND_CLEAR = '%clear';
+const COMMAND_HELP = '%help';
 const MAX_MESSAGE_CHARS = 450;
 
 type RunState = 'standby' | 'recording' | 'waiting_model';
@@ -54,6 +55,31 @@ function formatDurationMs(startNs: bigint, endNs: bigint): string {
 	return `${(Number(endNs - startNs) / 1_000_000).toFixed(2)}ms`;
 }
 
+const LOG_TIMEZONE = process.env.LOG_TIMEZONE
+	?? Intl.DateTimeFormat().resolvedOptions().timeZone
+	?? 'UTC';
+
+function nowWithTimezone(): string {
+	const parts = new Intl.DateTimeFormat('sv-SE', {
+		timeZone: LOG_TIMEZONE,
+		year: 'numeric',
+		month: '2-digit',
+		day: '2-digit',
+		hour: '2-digit',
+		minute: '2-digit',
+		second: '2-digit',
+		fractionalSecondDigits: 3,
+		hour12: false,
+	}).formatToParts(new Date());
+	const pick = (type: Intl.DateTimeFormatPartTypes): string =>
+		parts.find((part) => part.type === type)?.value ?? '';
+	return `${pick('year')}-${pick('month')}-${pick('day')} ${pick('hour')}:${pick('minute')}:${pick('second')}.${pick('fractionalSecond')}`;
+}
+
+function logWithTimestamp(level: 'log' | 'error', ...args: unknown[]): void {
+	console[level](`[${nowWithTimezone()}]`, ...args);
+}
+
 function extractModelText(content: unknown): string {
 	if (typeof content === 'string') return content;
 	if (!Array.isArray(content)) return '';
@@ -83,7 +109,7 @@ async function main() {
 	let state: RunState = 'standby';
 	const setState = (next: RunState): void => {
 		state = next;
-		console.log('[state]', state);
+		logWithTimestamp('log', '[state]', state);
 	};
 
 	let eventQueue: Promise<void> = Promise.resolve();
@@ -134,7 +160,7 @@ async function main() {
 			await ttsSession.endInput();
 		} finally {
 			const ttsGenEnd = process.hrtime.bigint();
-			console.log('[timing] tts_generation', formatDurationMs(ttsGenStart, ttsGenEnd));
+			logWithTimestamp('log', '[timing] tts_generation', formatDurationMs(ttsGenStart, ttsGenEnd));
 		}
 		await playbackPromise;
 	};
@@ -154,7 +180,7 @@ async function main() {
 		}
 
 		const wav = pcm16leToWav(pcm, SAMPLE_RATE, CHANNELS);
-		console.log('[llm] sending audio to model...', { pcmBytes: pcm.length, wavBytes: wav.length });
+		logWithTimestamp('log', '[llm] sending audio to model...', { pcmBytes: pcm.length, wavBytes: wav.length });
 
 		let streamText = '';
 		const llmStart = process.hrtime.bigint();
@@ -167,7 +193,7 @@ async function main() {
 			},
 		});
 		const llmEnd = process.hrtime.bigint();
-		console.log('[timing] model_inference', formatDurationMs(llmStart, llmEnd));
+		logWithTimestamp('log', '[timing] model_inference', formatDurationMs(llmStart, llmEnd));
 		if (!streamText.trim()) {
 			streamText = extractModelText(inference.message.content);
 		}
@@ -186,6 +212,13 @@ async function main() {
 
 	const handleCommand = async (message: string, clientId: number): Promise<void> => {
 		switch (message) {
+			case COMMAND_HELP:
+				await sendChannelText(`[ai-bot]可用指令：
+${COMMAND_START} - 开始录音
+${COMMAND_END} - 结束录音并让模型回复
+${COMMAND_CLEAR} - 清除模型上下文
+${COMMAND_HELP} - 显示帮助`);
+				break;
 			case COMMAND_CLEAR:
 				clearLlmContext();
 				await sendChannelText('[ai-bot]上下文已清除。');
@@ -216,11 +249,11 @@ async function main() {
 				// Run long model call in background so queue stays responsive.
 				currentInference = runModelReply()
 					.catch(async (err) => {
-						console.error('[inference error]', err);
+						logWithTimestamp('error', '[inference error]', err);
 						try {
 							await sendChannelText('[ai-bot]生成回复失败，请稍后再试。');
 						} catch (sendErr) {
-							console.error('[send error after inference failure]', sendErr);
+							logWithTimestamp('error', '[send error after inference failure]', sendErr);
 						}
 						setState('standby');
 					})
@@ -236,17 +269,17 @@ async function main() {
 	const shutdown = async (signal: string): Promise<void> => {
 		if (shuttingDown) return;
 		shuttingDown = true;
-		console.log(`[shutdown] ${signal}`);
+		logWithTimestamp('log', `[shutdown] ${signal}`);
 
 		try {
 			if (currentInference) {
-				console.log('[shutdown] inference in progress, disconnecting immediately');
+				logWithTimestamp('log', '[shutdown] inference in progress, disconnecting immediately');
 			}
 			if (client.isConnected()) {
 				await client.disconnect({ message: 'ai bot shutting down' });
 			}
 		} catch (err) {
-			console.error('[shutdown error]', err);
+			logWithTimestamp('error', '[shutdown error]', err);
 		} finally {
 			setState('standby');
 			process.exit(0);
@@ -254,15 +287,15 @@ async function main() {
 	};
 
 	client.on('connected', (payload) => {
-		console.log('[connected]', payload);
+		logWithTimestamp('log', '[connected]', payload);
 	});
 
 	client.on('disconnected', (payload) => {
-		console.log('[disconnected]', payload);
+		logWithTimestamp('log', '[disconnected]', payload);
 	});
 
 	client.on('error', (payload) => {
-		console.error('[error]', payload);
+		logWithTimestamp('error', '[error]', payload);
 	});
 
 	client.on('textMessage', (payload) => {
@@ -270,10 +303,10 @@ async function main() {
 			try {
 				const text = payload.message.trim();
 				if (!text.startsWith('%')) return;
-				console.log('[message]', payload);
+				logWithTimestamp('log', '[message]', payload);
 				await handleCommand(text, payload.invoker.id);
 			} catch (err) {
-				console.error('[textMessage handler error]', err);
+				logWithTimestamp('error', '[textMessage handler error]', err);
 			}
 		});
 	});
@@ -297,11 +330,11 @@ async function main() {
 	try {
 		await playStartupTts();
 	} catch (err) {
-		console.error('[tts startup failed]', err);
+		logWithTimestamp('error', '[tts startup failed]', err);
 	}
 
 	setState('standby');
-	console.log(`[ready] send "${COMMAND_START}" to start recording, "${COMMAND_END}" to stop and infer`);
+	logWithTimestamp('log', `[ready] send "${COMMAND_START}" to start recording, "${COMMAND_END}" to stop and infer`);
 
 	process.on('SIGINT', () => {
 		void shutdown('SIGINT');
@@ -315,6 +348,6 @@ async function main() {
 }
 
 main().catch((err) => {
-	console.error(err);
+	logWithTimestamp('error', err);
 	process.exit(1);
 });
