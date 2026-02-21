@@ -1,13 +1,19 @@
 import { TeamSpeakClient } from '../index';
 import { inferFromAudioStream, pcm16leToWav } from './llm';
+import { createAzureTtsStreamSession } from './tts';
 
 const SAMPLE_RATE = 48_000;
 const CHANNELS = 1;
+const FRAME_INTERVAL_MS = 20;
 const COMMAND_START = '%b';
 const COMMAND_END = '%e';
 const MAX_MESSAGE_CHARS = 450;
 
 type RunState = 'standby' | 'recording' | 'waiting_model';
+
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function splitMessage(text: string, maxChars: number): string[] {
 	if (!text.trim()) return [];
@@ -21,6 +27,26 @@ function splitMessage(text: string, maxChars: number): string[] {
 	}
 	if (rest) parts.push(rest);
 	return parts;
+}
+
+function stripMarkdownForTts(input: string): string {
+	return input
+		// fenced code blocks
+		.replace(/```[\s\S]*?```/g, ' ')
+		// inline code
+		.replace(/`([^`]+)`/g, '$1')
+		// markdown links [text](url) -> text
+		.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1')
+		// images ![alt](url) -> alt
+		.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '$1')
+		// heading markers, blockquote, list markers
+		.replace(/^\s{0,3}(#{1,6}|\*|-|\+|>|- \[.\])\s+/gm, '')
+		// emphasis / strong / strike
+		.replace(/(\*\*|__|\*|_|~~)/g, '')
+		// horizontal rules
+		.replace(/^\s{0,3}([-*_]\s?){3,}$/gm, ' ')
+		.replace(/\s+/g, ' ')
+		.trim();
 }
 
 async function main() {
@@ -52,6 +78,42 @@ async function main() {
 		await client.sendTextMessage({ target: 'channel', message });
 	};
 
+	const pushFrameWithRetry = async (frame: Buffer): Promise<void> => {
+		const maxAttempts = 5;
+		for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+			try {
+				client.pushFrame(frame);
+				return;
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				const isQueueFull = message.includes('Audio queue is full');
+				if (!isQueueFull || attempt === maxAttempts) {
+					throw err;
+				}
+				await sleep(FRAME_INTERVAL_MS);
+			}
+		}
+	};
+
+	const playTtsText = async (text: string): Promise<void> => {
+		const ttsSession = createAzureTtsStreamSession({
+			requestTimeoutMs: 30000,
+		});
+		const cleaned = stripMarkdownForTts(text);
+		if (!cleaned) return;
+		ttsSession.pushText(cleaned);
+		await ttsSession.endInput();
+		for await (const frame of ttsSession.readFrames()) {
+			if (frame.length === 0) continue;
+			await pushFrameWithRetry(frame);
+			await sleep(FRAME_INTERVAL_MS);
+		}
+	};
+
+	const playStartupTts = async (): Promise<void> => {
+		await playTtsText('你好，我来啦。');
+	};
+
 	const runModelReply = async (): Promise<void> => {
 		const pcm = Buffer.concat(audioChunks);
 		audioChunks.length = 0;
@@ -69,7 +131,7 @@ async function main() {
 		await inferFromAudioStream(wav, {
 			format: 'wav',
 			prompt: '你是一个无问不答的语音助手。请使用自然、简洁的语言和音频里面的人对话，解答他的所有问题或者满足他的其他要求。',
-			reasoningEnabled: true,
+			reasoningEnabled: false,
 			onTextDelta: (delta) => {
 				streamText += delta;
 			},
@@ -81,11 +143,9 @@ async function main() {
 		if (parts.length === 0) {
 			await sendChannelText('[ai-bot]模型没有返回可发送文本。');
 		} else {
-			for (const part of parts) {
-				await sendChannelText(part);
-			}
+			const ttsText = parts.join('\n');
+			await playTtsText(ttsText);
 		}
-
 		setState('standby');
 	};
 
@@ -194,6 +254,12 @@ async function main() {
 		nickname,
 		logLevel: 'off',
 	});
+
+	try {
+		await playStartupTts();
+	} catch (err) {
+		console.error('[tts startup failed]', err);
+	}
 
 	setState('standby');
 	console.log(`[ready] send "${COMMAND_START}" to start recording, "${COMMAND_END}" to stop and infer`);
