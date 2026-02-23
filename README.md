@@ -74,10 +74,23 @@ docker run --rm \
 | `OPENROUTER_API_KEY` | 是 | 无 | OpenRouter API Key，用于模型推理（`src/llm.ts`）。 |
 | `AZURE_APIKEY` | 是 | 无 | Azure Speech API Key，用于 TTS（`src/tts.ts`）。 |
 | `AZURE_ENDPOINT` | 是 | 无 | Azure Speech Endpoint，示例：`https://<region>.tts.speech.microsoft.com`（代码会自动拼接 `/cognitiveservices/v1`）。 |
+| `MODELS_DIR` | 否 | `/models` | 模型目录根路径。 |
+| `CORE_MELSPEC_MODEL_PATH` | 否 | `${MODELS_DIR}/melspectrogram.onnx` | melspectrogram 模型路径。 |
+| `CORE_EMBED_MODEL_PATH` | 否 | `${MODELS_DIR}/embedding_model.onnx` | embedding 模型路径。 |
+| `CORE_VAD_MODEL_PATH` | 否 | `${MODELS_DIR}/silero_vad.onnx` | VAD 模型路径。 |
+| `WAKEWORD_MODEL_PATH` | 否 | `${MODELS_DIR}/wakeword.onnx` | 唤醒词模型路径。 |
+| `WAKEWORD_NAME` | 否 | `wakeword` | 唤醒词名称。 |
+| `WAKE_ACK_WAV_PATH` | 否 | `${MODELS_DIR}/wake_ack.wav` | 唤醒后播放“我在”的本地 WAV 路径。 |
+| `WAKEWORD_THRESHOLD` | 否 | `0.5` | 唤醒词命中阈值。 |
+| `WAKEWORD_VAD_THRESHOLD` | 否 | `0.38` | VAD 语音判定阈值。 |
+| `WAKEWORD_VAD_HANGOVER_FRAMES` | 否 | `8` | VAD hangover 帧数（越大越不容易快速从 speech 切回 silence）。 |
+| `WAKEWORD_FRAME_LOG` | 否 | `0` | 是否输出逐帧唤醒词日志；`1` 打开，其他值关闭。 |
+| `SILENCE_TIMEOUT_MS` | 否 | `1500` | 录音中静音超时，超过后自动结束并提交 LLM。 |
 | `TS_ADDRESS` | 否 | `localhost` | TeamSpeak 服务器地址。 |
 | `TS_PASSWORD` | 否 | 无 | TeamSpeak 服务器密码（有密码时设置）。 |
 | `TS_CHANNEL` | 否 | 无 | 连接后要进入的频道。 |
 | `TS_NICKNAME` | 否 | `ts-audio-llm-demo` | 机器人昵称。 |
+| `LOG_TIMEZONE` | 否 | 系统时区（回退 `UTC`） | 日志时间戳使用的时区。 |
 
 示例（Linux/macOS）：
 
@@ -85,6 +98,8 @@ docker run --rm \
 export OPENROUTER_API_KEY="..."
 export AZURE_APIKEY="..."
 export AZURE_ENDPOINT="https://<region>.tts.speech.microsoft.com"
+export MODELS_DIR="/models"
+export WAKEWORD_FRAME_LOG="0"
 export TS_ADDRESS="localhost"
 export TS_PASSWORD="..."
 export TS_CHANNEL="..."

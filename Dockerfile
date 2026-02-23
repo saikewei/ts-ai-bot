@@ -20,11 +20,13 @@ COPY package.json package-lock.json tsconfig.json index.js index.d.ts ./
 COPY native ./native
 COPY rust ./rust
 COPY src ./src
+COPY models ./models
 
 RUN npm ci
 RUN cargo build --release --manifest-path native/tsclientlib-node/Cargo.toml \
   && npm run prepare:native \
   && npx tsc -p tsconfig.json \
+  && npm prune --omit=dev \
   && if command -v strip >/dev/null 2>&1; then strip --strip-unneeded native/tsclientlib-node/index.node; fi
 
 FROM node:22-bookworm-slim AS runtime
@@ -43,7 +45,9 @@ ENV NODE_ENV=production
 
 COPY --from=build /app/package.json /app/package-lock.json ./
 COPY --from=build /app/index.js /app/index.d.ts ./
+COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
+COPY --from=build /app/models ./models
 COPY --from=build /app/native/tsclientlib-node/index.js /app/native/tsclientlib-node/index.d.ts /app/native/tsclientlib-node/index.node ./native/tsclientlib-node/
 
 CMD ["node", "dist/main.js"]
