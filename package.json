@@ -10,12 +10,16 @@
     "prepare:native": "node native/tsclientlib-node/scripts/prepare-native.js",
     "build": "npm run build:native && npm run prepare:native && tsc -p tsconfig.json",
     "dev": "tsx src/main.ts",
+    "demo:wakeword": "tsx src/wake_word_demo.ts",
     "demo:native": "node --experimental-strip-types native/tsclientlib-node/examples/simple.ts",
     "demo:native:text": "node --experimental-strip-types native/tsclientlib-node/examples/text_chat.ts"
   },
   "devDependencies": {
+    "@types/node": "^24.3.1",
     "tsx": "^4.20.5",
-    "typescript": "^5.9.2",
-    "@types/node": "^24.3.1"
+    "typescript": "^5.9.2"
+  },
+  "dependencies": {
+    "onnxruntime-web": "^1.24.2"
   }
 }
