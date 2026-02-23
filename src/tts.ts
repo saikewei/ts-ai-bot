@@ -30,13 +30,13 @@ export interface TtsStreamSession {
 const DEFAULT_TTS_CONFIG: Required<AzureTtsConfig> = {
 	endpoint: '',
 	apiKey: '',
-	voice: 'en-US-AvaMultilingualNeural',
+	voice: 'zh-CN-XiaoxiaoNeural',
 	outputFormat: 'raw-48khz-16bit-mono-pcm',
 	sentenceFlushMs: 180,
 	maxBufferedChars: 900,
 	maxConcurrentRequests: 5,
 	requestTimeoutMs: 30_000,
-	xmlLang: 'en-US',
+	xmlLang: 'zh-CN',
 };
 
 interface QueuedSegment {
