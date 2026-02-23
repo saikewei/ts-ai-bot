@@ -28,6 +28,10 @@ const WAKEWORD_COOLDOWN_MS = 2000;
 const WAKEWORD_VAD_THRESHOLD = Number(process.env.WAKEWORD_VAD_THRESHOLD ?? 0.38);
 const WAKEWORD_VAD_HANGOVER_FRAMES = Number(process.env.WAKEWORD_VAD_HANGOVER_FRAMES ?? 8);
 const WAKEWORD_FRAME_LOG = process.env.WAKEWORD_FRAME_LOG === '1';
+const WAKEWORD_PERF_LOG = process.env.WAKEWORD_PERF_LOG === '1';
+const WAKEWORD_PERF_SUMMARY_MS = Number(process.env.WAKEWORD_PERF_SUMMARY_MS ?? 5000);
+const WAKEWORD_PERF_WARN_QUEUE_DELAY_MS = Number(process.env.WAKEWORD_PERF_WARN_QUEUE_DELAY_MS ?? 120);
+const WAKEWORD_PERF_WARN_PENDING = Number(process.env.WAKEWORD_PERF_WARN_PENDING ?? 8);
 const DETECTOR_SAMPLE_RATE = 16_000;
 const DETECTOR_FRAME_SIZE = 1280;
 
@@ -52,6 +56,11 @@ interface SpeakerDetectorContext {
 	offFrameResult?: () => void;
 	offSpeechStart?: () => void;
 	offSpeechEnd?: () => void;
+	pendingJobs: number;
+	intervalProcessedChunks: number;
+	intervalTotalProcessMs: number;
+	intervalMaxProcessMs: number;
+	intervalMaxQueueDelayMs: number;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -239,6 +248,15 @@ async function main() {
 	if (!Number.isFinite(WAKEWORD_VAD_HANGOVER_FRAMES) || WAKEWORD_VAD_HANGOVER_FRAMES < 0) {
 		throw new Error(`Invalid WAKEWORD_VAD_HANGOVER_FRAMES: ${WAKEWORD_VAD_HANGOVER_FRAMES}`);
 	}
+	if (!isFinitePositive(WAKEWORD_PERF_SUMMARY_MS)) {
+		throw new Error(`Invalid WAKEWORD_PERF_SUMMARY_MS: ${WAKEWORD_PERF_SUMMARY_MS}`);
+	}
+	if (!isFinitePositive(WAKEWORD_PERF_WARN_QUEUE_DELAY_MS)) {
+		throw new Error(`Invalid WAKEWORD_PERF_WARN_QUEUE_DELAY_MS: ${WAKEWORD_PERF_WARN_QUEUE_DELAY_MS}`);
+	}
+	if (!isFinitePositive(WAKEWORD_PERF_WARN_PENDING)) {
+		throw new Error(`Invalid WAKEWORD_PERF_WARN_PENDING: ${WAKEWORD_PERF_WARN_PENDING}`);
+	}
 	const address = process.env.TS_ADDRESS ?? 'localhost';
 	const password = process.env.TS_PASSWORD;
 	const channel = process.env.TS_CHANNEL;
@@ -260,6 +278,10 @@ async function main() {
 		vadThreshold: WAKEWORD_VAD_THRESHOLD,
 		vadHangoverFrames: WAKEWORD_VAD_HANGOVER_FRAMES,
 		frameLog: WAKEWORD_FRAME_LOG,
+		perfLog: WAKEWORD_PERF_LOG,
+		perfSummaryMs: WAKEWORD_PERF_SUMMARY_MS,
+		perfWarnQueueDelayMs: WAKEWORD_PERF_WARN_QUEUE_DELAY_MS,
+		perfWarnPending: WAKEWORD_PERF_WARN_PENDING,
 	});
 
 	const client = new TeamSpeakClient();
@@ -502,6 +524,11 @@ async function main() {
 			resampleCarry: new Int16Array(0),
 			detectorCarry: new Float32Array(0),
 			lastSeenAtMs: Date.now(),
+			pendingJobs: 0,
+			intervalProcessedChunks: 0,
+			intervalTotalProcessMs: 0,
+			intervalMaxProcessMs: 0,
+			intervalMaxQueueDelayMs: 0,
 		};
 
 		ctx.offReady = engine.on('ready', () => {
@@ -574,20 +601,39 @@ async function main() {
 	const processSpeakerWakeword = (speakerId: number, pcm: Buffer): void => {
 		const ctx = ensureSpeakerDetector(speakerId);
 		ctx.lastSeenAtMs = Date.now();
+		const enqueueAtMs = Date.now();
+		ctx.pendingJobs += 1;
+		if (WAKEWORD_PERF_LOG && ctx.pendingJobs >= Math.floor(WAKEWORD_PERF_WARN_PENDING)) {
+			logWithTimestamp('error', '[wakeword perf backlog]', { speakerId, pending: ctx.pendingJobs });
+		}
 		ctx.queue = ctx.queue.then(async () => {
-			if (!ctx.loaded) {
-				await ctx.engine.load();
-				ctx.loaded = true;
-			}
-			const pcm16 = pcm16BufferToInt16Array(pcm);
-			const down = downsample48kTo16k(pcm16, ctx.resampleCarry);
-			ctx.resampleCarry = down.carry;
-			ctx.detectorCarry = appendFloat32(ctx.detectorCarry, down.out);
+				try {
+					const queueDelayMs = Date.now() - enqueueAtMs;
+					if (queueDelayMs > ctx.intervalMaxQueueDelayMs) ctx.intervalMaxQueueDelayMs = queueDelayMs;
+					if (WAKEWORD_PERF_LOG && queueDelayMs >= Math.floor(WAKEWORD_PERF_WARN_QUEUE_DELAY_MS)) {
+						logWithTimestamp('error', '[wakeword perf queue-delay]', { speakerId, queueDelayMs, pending: ctx.pendingJobs });
+					}
+				if (!ctx.loaded) {
+					await ctx.engine.load();
+					ctx.loaded = true;
+				}
+				const pcm16 = pcm16BufferToInt16Array(pcm);
+				const down = downsample48kTo16k(pcm16, ctx.resampleCarry);
+				ctx.resampleCarry = down.carry;
+				ctx.detectorCarry = appendFloat32(ctx.detectorCarry, down.out);
 
-			while (ctx.detectorCarry.length >= DETECTOR_FRAME_SIZE) {
-				const chunk = ctx.detectorCarry.subarray(0, DETECTOR_FRAME_SIZE);
-				await ctx.engine.processChunk(chunk, { emitEvents: true });
-				ctx.detectorCarry = ctx.detectorCarry.slice(DETECTOR_FRAME_SIZE);
+					while (ctx.detectorCarry.length >= DETECTOR_FRAME_SIZE) {
+						const chunk = ctx.detectorCarry.subarray(0, DETECTOR_FRAME_SIZE);
+						const chunkStartMs = Date.now();
+						await ctx.engine.processChunk(chunk, { emitEvents: true });
+						const chunkCostMs = Date.now() - chunkStartMs;
+						ctx.intervalProcessedChunks += 1;
+						ctx.intervalTotalProcessMs += chunkCostMs;
+						if (chunkCostMs > ctx.intervalMaxProcessMs) ctx.intervalMaxProcessMs = chunkCostMs;
+						ctx.detectorCarry = ctx.detectorCarry.slice(DETECTOR_FRAME_SIZE);
+					}
+				} finally {
+				ctx.pendingJobs = Math.max(0, ctx.pendingJobs - 1);
 			}
 		}).catch((err) => {
 			logWithTimestamp('error', '[wakeword processing error]', { speakerId, err });
@@ -673,6 +719,54 @@ ${COMMAND_HELP} - 显示帮助`);
 		}
 	}, DETECTOR_CLEANUP_INTERVAL_MS);
 
+	const perfLogTimer = setInterval(() => {
+		if (!WAKEWORD_PERF_LOG) return;
+		let activeSpeakers = 0;
+		let totalPending = 0;
+		let totalProcessed = 0;
+		let globalMaxQueueDelayMs = 0;
+		let globalMaxProcessMs = 0;
+		for (const [speakerId, ctx] of detectorBySpeaker.entries()) {
+			const processed = ctx.intervalProcessedChunks;
+			const totalMs = ctx.intervalTotalProcessMs;
+			const maxProcessMs = ctx.intervalMaxProcessMs;
+			const maxQueueDelayMs = ctx.intervalMaxQueueDelayMs;
+			const pending = ctx.pendingJobs;
+			if (processed <= 0 && pending <= 0) continue;
+
+			activeSpeakers += 1;
+			totalPending += pending;
+			totalProcessed += processed;
+			if (maxQueueDelayMs > globalMaxQueueDelayMs) globalMaxQueueDelayMs = maxQueueDelayMs;
+			if (maxProcessMs > globalMaxProcessMs) globalMaxProcessMs = maxProcessMs;
+
+			const avgProcessMs = processed > 0 ? Number((totalMs / processed).toFixed(2)) : 0;
+			logWithTimestamp('log', '[wakeword perf]', {
+				speakerId,
+				processed,
+				pending,
+				avgProcessMs,
+				maxProcessMs,
+				maxQueueDelayMs,
+			});
+
+			ctx.intervalProcessedChunks = 0;
+			ctx.intervalTotalProcessMs = 0;
+			ctx.intervalMaxProcessMs = 0;
+			ctx.intervalMaxQueueDelayMs = 0;
+		}
+
+		if (activeSpeakers > 0 || totalPending > 0 || totalProcessed > 0) {
+			logWithTimestamp('log', '[wakeword perf total]', {
+				activeSpeakers,
+				totalProcessed,
+				totalPending,
+				globalMaxProcessMs,
+				globalMaxQueueDelayMs,
+			});
+		}
+	}, Math.floor(WAKEWORD_PERF_SUMMARY_MS));
+
 	client.on('connected', (payload) => {
 		logWithTimestamp('log', '[connected]', payload);
 	});
@@ -739,11 +833,13 @@ ${COMMAND_HELP} - 显示帮助`);
 
 	process.on('SIGINT', () => {
 		clearInterval(detectorGcTimer);
+		clearInterval(perfLogTimer);
 		void shutdown('SIGINT');
 	});
 
 	process.on('SIGTERM', () => {
 		clearInterval(detectorGcTimer);
+		clearInterval(perfLogTimer);
 		void shutdown('SIGTERM');
 	});
 
