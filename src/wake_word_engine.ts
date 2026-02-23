@@ -1,29 +1,9 @@
+// This file is adapted from:
+// https://github.com/dnavarrom/openwakeword_wasm/blob/main/src/WakeWordEngine.js
 import * as ort from 'onnxruntime-web';
 import * as path from 'node:path';
 
 export const MODEL_FILE_MAP: Record<string, string> = {};
-
-const AUDIO_PROCESSOR = `
-class AudioProcessor extends AudioWorkletProcessor {
-    bufferSize = 1280;
-    _buffer = new Float32Array(this.bufferSize);
-    _pos = 0;
-    process(inputs) {
-        const input = inputs[0][0];
-        if (input) {
-            for (let i = 0; i < input.length; i++) {
-                this._buffer[this._pos++] = input[i];
-                if (this._pos === this.bufferSize) {
-                    this.port.postMessage(this._buffer);
-                    this._pos = 0;
-                }
-            }
-        }
-        return true;
-    }
-}
-registerProcessor('audio-processor', AudioProcessor);
-`;
 
 type WakeWordEvent =
     | 'ready'
@@ -52,7 +32,6 @@ interface WakeWordEngineOptions {
     modelFiles?: Record<string, string>;
     coreModelFiles?: Partial<CoreModelFiles>;
     baseModelPath?: string;
-    ortWasmPath?: string | Record<string, string>;
     frameSize?: number;
     sampleRate?: number;
     vadHangoverFrames?: number;
@@ -115,16 +94,10 @@ export class WakeWordEngine {
     private config: WakeWordEngineConfig;
     private _emitter: WakeWordEmitter;
     private _melBuffer: Float32Array[];
-    private _embeddingWindowSize: number;
     private _activeKeywords: Set<string>;
     private _vadState: { h: ort.Tensor | null; c: ort.Tensor | null };
     private _isSpeechActive: boolean;
     private _vadHangover: number;
-    private _mediaStream: MediaStream | null;
-    private _audioContext: AudioContext | null;
-    private _workletNode: AudioWorkletNode | null;
-    private _gainNode: GainNode | null;
-    private _processingQueue: Promise<void>;
     private _isDetectionCoolingDown: boolean;
     private _loaded: boolean;
 
@@ -138,7 +111,6 @@ export class WakeWordEngine {
         modelFiles = MODEL_FILE_MAP,
         coreModelFiles = {},
         baseModelPath = '/models',
-        ortWasmPath,
         frameSize = 1280,
         sampleRate = 16000,
         vadHangoverFrames = 12,
@@ -168,29 +140,18 @@ export class WakeWordEngine {
             embeddingWindowSize,
             debug
         };
-        this._setOrtPath(ortWasmPath);
         this._emitter = createEmitter();
         this._melBuffer = [];
-        this._embeddingWindowSize = embeddingWindowSize;
         this._activeKeywords = new Set(keywords);
         this._vadState = { h: null, c: null };
         this._isSpeechActive = false;
         this._vadHangover = 0;
-        this._mediaStream = null;
-        this._audioContext = null;
-        this._workletNode = null;
-        this._gainNode = null;
-        this._processingQueue = Promise.resolve();
         this._isDetectionCoolingDown = false;
         this._loaded = false;
     }
 
     on(event: WakeWordEvent, handler: EventHandler): () => void {
         return this._emitter.on(event, handler);
-    }
-
-    off(event: WakeWordEvent, handler: EventHandler): void {
-        this._emitter.off(event, handler);
     }
 
     async load(): Promise<void> {
@@ -235,114 +196,10 @@ export class WakeWordEngine {
             };
             this._debug('Loaded keyword model', { keyword, file, windowSize });
         }
-        this._embeddingWindowSize = maxWindowSize;
-        this._debug('Embedding window size resolved', this._embeddingWindowSize);
+        this._debug('Embedding window size resolved', maxWindowSize);
         this._resetState();
         this._loaded = true;
         this._emitter.emit('ready');
-    }
-
-    async start({ deviceId, gain = 1.0 }: { deviceId?: string; gain?: number } = {}): Promise<void> {
-        if (!this._loaded) throw new Error('Call load() before start()');
-        if (this._workletNode) return;
-
-        this._resetState();
-        this._mediaStream = await navigator.mediaDevices.getUserMedia({
-            audio: deviceId ? { deviceId: { exact: deviceId } } : true
-        });
-
-        this._audioContext = new AudioContext({ sampleRate: this.config.sampleRate });
-        const source = this._audioContext.createMediaStreamSource(this._mediaStream);
-        this._gainNode = this._audioContext.createGain();
-        this._gainNode.gain.value = gain;
-
-        const blob = new Blob([AUDIO_PROCESSOR], { type: 'application/javascript' });
-        const workletURL = URL.createObjectURL(blob);
-        await this._audioContext.audioWorklet.addModule(workletURL);
-        this._workletNode = new AudioWorkletNode(this._audioContext, 'audio-processor');
-
-        this._workletNode.port.onmessage = (event: MessageEvent<Float32Array>) => {
-            const chunk = event.data;
-            if (!chunk) return;
-            this._processingQueue = this._processingQueue.then(() => this._processChunk(chunk)).catch((err: unknown) => {
-                this._emitter.emit('error', err);
-            });
-        };
-
-        source.connect(this._gainNode);
-        this._gainNode.connect(this._workletNode);
-        this._workletNode.connect(this._audioContext.destination);
-        this._debug('Microphone stream started', { deviceId: deviceId ?? 'default', gain });
-    }
-
-    async stop(): Promise<void> {
-        if (this._workletNode) {
-            this._workletNode.port.onmessage = null;
-            this._workletNode.disconnect();
-            this._workletNode = null;
-        }
-        if (this._gainNode) {
-            this._gainNode.disconnect();
-            this._gainNode = null;
-        }
-        if (this._audioContext && this._audioContext.state !== 'closed') {
-            await this._audioContext.close();
-        }
-        this._audioContext = null;
-        if (this._mediaStream) {
-            this._mediaStream.getTracks().forEach((track) => track.stop());
-            this._mediaStream = null;
-        }
-        this._isDetectionCoolingDown = false;
-        this._debug('Engine stopped and media stream closed');
-    }
-
-    setGain(value: number): void {
-        if (this._gainNode) {
-            this._gainNode.gain.value = value;
-        }
-    }
-
-    async runWav(buffer: ArrayBuffer): Promise<number> {
-        if (!this._loaded) throw new Error('Call load() before runWav()');
-        this._resetState();
-
-        const AudioContextCtor = window.AudioContext || (window as any).webkitAudioContext;
-        const audioContext = new AudioContextCtor();
-        const decoded = await audioContext.decodeAudioData(buffer.slice(0));
-        const offline = new OfflineAudioContext(
-            1,
-            Math.ceil((decoded.length * this.config.sampleRate) / decoded.sampleRate),
-            this.config.sampleRate
-        );
-        const src = offline.createBufferSource();
-        src.buffer = decoded;
-        src.connect(offline.destination);
-        src.start();
-        const rendered = await offline.startRendering();
-        const audioData = rendered.getChannelData(0);
-        this._debug('Running offline WAV', { samples: audioData.length });
-
-        const minRequiredSamples = this._embeddingWindowSize * this.config.frameSize;
-        let padded: Float32Array = audioData;
-        if (padded.length < minRequiredSamples) {
-            const padding = new Float32Array(minRequiredSamples - padded.length);
-            const newAudioData = new Float32Array(minRequiredSamples);
-            newAudioData.set(padded, 0);
-            newAudioData.set(padding, padded.length);
-            padded = newAudioData;
-        }
-
-        let highest = 0;
-        for (let i = 0; i < Math.floor(padded.length / this.config.frameSize); i++) {
-            const chunk = padded.subarray(i * this.config.frameSize, (i + 1) * this.config.frameSize);
-            await this._processChunk(chunk, { emitEvents: false });
-            for (const key of Object.keys(this._keywordModels)) {
-                const tail = this._keywordModels[key].scores.slice(-1)[0] ?? 0;
-                if (tail > highest) highest = tail;
-            }
-        }
-        return highest;
     }
 
     async processChunk(chunk: Float32Array, { emitEvents = true }: { emitEvents?: boolean } = {}): Promise<void> {
@@ -519,12 +376,6 @@ export class WakeWordEngine {
         }
     }
 
-    private _setOrtPath(path?: string | Record<string, string>): void {
-        if (path) {
-            ort.env.wasm.wasmPaths = path;
-        }
-    }
-
     private _resolveLocalModelPath(file: string): string {
         if (path.isAbsolute(file) || /^[A-Za-z]:[\\/]/.test(file)) {
             return file;
@@ -574,11 +425,5 @@ export class WakeWordEngine {
         if (this.config.debug) {
             console.debug('[WakeWordEngine]', ...args);
         }
-    }
-
-    setActiveKeywords(keywords: string[]): void {
-        const next = Array.isArray(keywords) && keywords.length ? keywords : this.config.keywords;
-        this._activeKeywords = new Set(next);
-        this._debug('Active keywords updated', Array.from(this._activeKeywords));
     }
 }
