@@ -72,6 +72,7 @@ docker run --rm \
 | 变量名 | 是否必填 | 默认值 | 说明 |
 |---|---|---|---|
 | `OPENROUTER_API_KEY` | 是 | 无 | OpenRouter API Key，用于模型推理（`src/llm.ts`）。 |
+| `OPENROUTER_HTTP_PROXY` | 否 | 无 | OpenRouter 请求使用的 HTTP 代理地址（如：`http://127.0.0.1:10808`）。未设置时回退读取 `HTTPS_PROXY`/`HTTP_PROXY`。 |
 | `AZURE_APIKEY` | 是 | 无 | Azure Speech API Key，用于 TTS（`src/tts.ts`）。 |
 | `AZURE_ENDPOINT` | 是 | 无 | Azure Speech Endpoint，示例：`https://<region>.tts.speech.microsoft.com`（代码会自动拼接 `/cognitiveservices/v1`）。 |
 | `MODELS_DIR` | 否 | `/app/models` | 模型目录根路径。 |
@@ -100,6 +101,7 @@ docker run --rm \
 
 ```bash
 export OPENROUTER_API_KEY="..."
+export OPENROUTER_HTTP_PROXY="http://127.0.0.1:10808"
 export AZURE_APIKEY="..."
 export AZURE_ENDPOINT="https://<region>.tts.speech.microsoft.com"
 export MODELS_DIR="/app/models"

@@ -24,6 +24,41 @@ let contextSummary = '';
 let recentTurns: LlmContextTurn[] = [];
 let turnCount = 0;
 let contextOps: Promise<void> = Promise.resolve();
+let proxyInitDone = false;
+let proxyDispatcher: unknown | undefined;
+
+function resolveProxyUrl(): string | undefined {
+	const raw = process.env.OPENROUTER_HTTP_PROXY
+		?? process.env.openrouter_http_proxy
+		?? process.env.HTTPS_PROXY
+		?? process.env.https_proxy
+		?? process.env.HTTP_PROXY
+		?? process.env.http_proxy;
+	const trimmed = raw?.trim();
+	return trimmed ? trimmed : undefined;
+}
+
+function ensureProxyDispatcher(): unknown | undefined {
+	if (proxyInitDone) return proxyDispatcher;
+	proxyInitDone = true;
+
+	const proxyUrl = resolveProxyUrl();
+	if (!proxyUrl) return undefined;
+
+	try {
+		const { ProxyAgent } = require('undici') as {
+			ProxyAgent: new (uri: string) => unknown;
+		};
+		proxyDispatcher = new ProxyAgent(proxyUrl);
+		console.log('[llm] OpenRouter proxy enabled:', proxyUrl);
+		return proxyDispatcher;
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(
+			`Proxy is configured (${proxyUrl}) but undici is not available. Install it with "npm i undici". (${message})`,
+		);
+	}
+}
 
 function runInContextQueue<T>(task: () => Promise<T>): Promise<T> {
 	const run = contextOps.then(task, task);
@@ -95,6 +130,7 @@ function buildSummaryFallback(previousSummary: string, overflow: LlmContextTurn[
 }
 
 async function fetchOpenRouterJson(apiKey: string, body: unknown): Promise<unknown> {
+	const dispatcher = ensureProxyDispatcher();
 	const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
 		method: 'POST',
 		headers: {
@@ -102,6 +138,7 @@ async function fetchOpenRouterJson(apiKey: string, body: unknown): Promise<unkno
 			'Content-Type': 'application/json',
 		},
 		body: JSON.stringify(body),
+		...(dispatcher ? ({ dispatcher } as object) : {}),
 	});
 	if (!response.ok) {
 		const errText = await response.text();
@@ -315,6 +352,7 @@ export async function inferFromAudio(
 	const audioBase64 = Buffer.isBuffer(audio) ? audio.toString('base64') : audio;
 
 	return runInContextQueue(async () => {
+		const dispatcher = ensureProxyDispatcher();
 		if (clearBefore) {
 			clearLlmContext();
 		}
@@ -383,6 +421,7 @@ export async function inferFromAudioStream(
 	const audioBase64 = Buffer.isBuffer(audio) ? audio.toString('base64') : audio;
 
 	return runInContextQueue(async () => {
+		const dispatcher = ensureProxyDispatcher();
 		if (clearBefore) {
 			clearLlmContext();
 		}
@@ -414,6 +453,7 @@ export async function inferFromAudioStream(
 				],
 				reasoning: { enabled: reasoningEnabled },
 			}),
+			...(dispatcher ? ({ dispatcher } as object) : {}),
 		});
 
 		if (!response.ok) {
