@@ -80,7 +80,6 @@ cp TS-AI-Bot/config.yaml.example TS-AI-Bot/config.yaml
 dotnet run --project TS-AI-Bot/TS-AI-Bot.csproj -c Release
 ```
 
-See [TS-AI-Bot/DEPLOYMENT.md](./TS-AI-Bot/DEPLOYMENT.md) for Docker and bare-metal deployment instructions.
 
 ---
 
