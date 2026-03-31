@@ -30,6 +30,10 @@
         <None Update="models\**\*">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </None>
+
+        <None Update="config.yaml.example">
+          <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </None>
     </ItemGroup>
 
     <ItemGroup>
