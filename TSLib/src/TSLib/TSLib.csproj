@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFrameworks>netcoreapp3.1;netstandard2.0;netstandard2.1</TargetFrameworks>
+    <LangVersion>8.0</LangVersion>
+    <RootNamespace>TSLib</RootNamespace>
+    <AssemblyName>TSLib</AssemblyName>
+
+    <Nullable>enable</Nullable>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <DebugType>portable</DebugType>
+
+    <PackageId>Splamy.TSLib</PackageId>
+    <Authors>Splamy, Flakebi, TSLib Contributors</Authors>
+    <Company>TSLib</Company>
+    <Description>
+      A free and open source TeamSpeak 3 and 5 client library.
+      Can connect as normal voice or query client and is optimized for performance.
+    </Description>
+    <Copyright>Splamy, Flakebi, TSLib Contributors</Copyright>
+    <PackageLicenseExpression>OSL-3.0</PackageLicenseExpression>
+    <Version>1.1.0</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="NLog" Version="4.7.3" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+    <PackageReference Include="Heijden.Dns.Portable" Version="2.0.19" />
+    <PackageReference Include="Nullable" Version="1.2.1">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Portable.BouncyCastle" Version="1.9.0" />
+    <PackageReference Include="Splamy.Ed25519.Toolkit" Version="1.0.3" />
+    <PackageReference Include="System.IO.Pipelines" Version="4.7.2" />
+    <PackageReference Condition="'$(TargetFramework)' == 'netstandard2.0'" Include="System.Memory" Version="4.5.4" />
+  </ItemGroup>
+</Project>

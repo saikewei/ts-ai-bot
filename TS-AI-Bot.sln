@@ -1,0 +1,34 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TS-AI-Bot", "TS-AI-Bot\TS-AI-Bot.csproj", "{87B2D5DC-6137-4BC4-BEF6-027C788CA1FB}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TS_AI_Bot.Tests", "TS_AI_Bot.Tests\TS_AI_Bot.Tests.csproj", "{0B3279CE-E08D-4DF2-9B02-13D9494AE7EF}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TSLib", "TSLib\src\TSLib\TSLib.csproj", "{077D8EE1-D360-4DEE-92FA-95F6BBFCBD54}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NanoWakeWord", "NanoWakeWord\NanoWakeWord.csproj", "{1D38AE39-9596-49EC-A408-182BECA9B94B}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{87B2D5DC-6137-4BC4-BEF6-027C788CA1FB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{87B2D5DC-6137-4BC4-BEF6-027C788CA1FB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{87B2D5DC-6137-4BC4-BEF6-027C788CA1FB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{87B2D5DC-6137-4BC4-BEF6-027C788CA1FB}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0B3279CE-E08D-4DF2-9B02-13D9494AE7EF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0B3279CE-E08D-4DF2-9B02-13D9494AE7EF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0B3279CE-E08D-4DF2-9B02-13D9494AE7EF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0B3279CE-E08D-4DF2-9B02-13D9494AE7EF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{077D8EE1-D360-4DEE-92FA-95F6BBFCBD54}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{077D8EE1-D360-4DEE-92FA-95F6BBFCBD54}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{077D8EE1-D360-4DEE-92FA-95F6BBFCBD54}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{077D8EE1-D360-4DEE-92FA-95F6BBFCBD54}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1D38AE39-9596-49EC-A408-182BECA9B94B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1D38AE39-9596-49EC-A408-182BECA9B94B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1D38AE39-9596-49EC-A408-182BECA9B94B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1D38AE39-9596-49EC-A408-182BECA9B94B}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
