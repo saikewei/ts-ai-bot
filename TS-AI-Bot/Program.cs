@@ -4,7 +4,7 @@ using YamlDotNet.Serialization.NamingConventions;
 using Serilog;
 
 // 1. 配置日志
-Log.Logger = new LoggerConfiguration().MinimumLevel.Debug().WriteTo
+Log.Logger = new LoggerConfiguration().MinimumLevel.Information().WriteTo
     .Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
     .CreateLogger();
 

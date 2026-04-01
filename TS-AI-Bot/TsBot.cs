@@ -4,6 +4,7 @@ using TSLib.Audio;
 using TSLib.Full;
 using TSLib.Messages;
 using TSLib.Scheduler;
+using System.Collections.Concurrent;
 
 namespace TS_AI_Bot;
 
@@ -29,6 +30,7 @@ public class TsBot : IAsyncDisposable
     private CancellationTokenSource? _ttsCts;
     private readonly byte[] _beepAudio;
     private byte[]? _helloAudio;
+    private readonly ConcurrentDictionary<ushort, byte[]> _responseAudioCache;
 
     public TsBot(AppSettings config)
     {
@@ -54,6 +56,7 @@ public class TsBot : IAsyncDisposable
 
         // 生成缓存音频
         _beepAudio = TtsAudioProducer.GenerateBeepPcm();
+        _responseAudioCache = new ConcurrentDictionary<ushort, byte[]>();
 
         // 4. 组装音频管道
         _client.OutStream = packetReader;
@@ -67,6 +70,7 @@ public class TsBot : IAsyncDisposable
         // 5. 绑定事件
         _wakeWordReceiver.OnAudioRecorded += HandleAudioRecorded;
         _wakeWordReceiver.OnWakeWordDetected += HandleWakeWordDetected;
+        _wakeWordReceiver.OnNewUser += HandleNewUser;
         _client.OnEachTextMessage += HandleTextMessage;
     }
 
@@ -167,27 +171,31 @@ public class TsBot : IAsyncDisposable
         {
             try
             {
-                var clientId = ClientId.To(userId);
-                var infoResult = await _client.ClientInfo(clientId);
-
-                if (infoResult.Ok)
+                var name = await GetNameFromUserId(userId);
+                Log.Information("{Name} waked me up.", name);
+                
+                // 1. 尝试从字典中获取预加载的语音缓存
+                if (!_responseAudioCache.TryGetValue(userId, out var responseAudio))
                 {
-                    var info = infoResult.Value;
-                    Log.Information("{Name} waked me up!", info.Name);
-
-                    var responseAudio = await _doubaoTtsClient.SpeakTextAsync(info.Name + _config.Texts.ResponseAudio, speedRate: _config.DoubaoTts.Speed);
-                    await _ttsAudioProducer.PlayTtsAsync(responseAudio);
+                    Log.Warning("Cache miss for {Name}, synthesizing on the fly...", name);
+                    
+                    // 2. 现场异步推理 (保险机制)
+                    responseAudio = await _doubaoTtsClient.SpeakTextAsync(
+                        name + _config.Texts.ResponseAudio, 
+                        speedRate: _config.DoubaoTts.Speed);
+                    
+                    // 3. 把现场生成的语音加进缓存，下次就不需要再推理了
+                    _responseAudioCache.TryAdd(userId, responseAudio);
                 }
-                else
-                {
-                    throw new Exception(infoResult.Error.Message);
-                }
+                
+                // 4. 播放音频
+                await _ttsAudioProducer.PlayTtsAsync(responseAudio);
             }
             catch (Exception ex)
             {
                 Log.Error("Fail to play sound: {Exception}", ex);
             }
-        });
+        }); 
     }
 
     private void HandleTextMessage(object? sender, TextMessage message)
@@ -203,6 +211,44 @@ public class TsBot : IAsyncDisposable
             Log.Information("{Name}: {Message}", message.InvokerName, message.Message);
         }
     }
+
+    private void HandleNewUser(ushort userId)
+    {
+        _ = _scheduler.InvokeAsync(async () =>
+        {
+            try
+            {
+                var name = await GetNameFromUserId(userId);
+                var responseAudio = await _doubaoTtsClient.SpeakTextAsync(
+                    name + _config.Texts.ResponseAudio,
+                    speedRate: _config.DoubaoTts.Speed);
+                    
+                _responseAudioCache.TryAdd(userId, responseAudio);
+                
+                Log.Information("Cached response audio for user {Name}", name);
+            }
+            catch(Exception ex)
+            {
+                Log.Error("Fail to cache response audio for user {UserId}: {Ex}", userId, ex.Message);
+            }
+        });
+    }
+
+    private async Task<string> GetNameFromUserId(ushort userId)
+    {
+        
+        var clientId = ClientId.To(userId);
+        var infoResult = await _client.ClientInfo(clientId);
+
+        if (infoResult.Ok)
+        {
+            return infoResult.Value.Name;
+        }
+        else
+        {
+            throw new Exception(infoResult.Error.Message);
+        }
+    } 
 
     /// <summary>
     /// 安全关闭机器人并释放资源
