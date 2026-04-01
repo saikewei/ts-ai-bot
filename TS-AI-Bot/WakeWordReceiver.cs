@@ -9,6 +9,7 @@ public class WakeWordReceiver : IAudioPassiveConsumer, IDisposable
     public bool Active => true;
     public event Action<ushort, byte[]>? OnAudioRecorded;
     public event Action<ushort>? OnWakeWordDetected;
+    public event Action<ushort>? OnNewUser;
     
     private readonly CancellationTokenSource _cts = new();
     
@@ -47,6 +48,7 @@ public class WakeWordReceiver : IAudioPassiveConsumer, IDisposable
             {
                 var newDetector = new WakeWordDetector(senderId, _accessKey);
                 newDetector.OnWaked += HandleUserWaked;
+                OnNewUser?.Invoke(senderId);
                 return newDetector;
             });
             
@@ -102,7 +104,7 @@ public class WakeWordReceiver : IAudioPassiveConsumer, IDisposable
     {
         try
         {
-            var isFirstWake = false;
+            bool isFirstWake;
             
             lock (_lockObj)
             {

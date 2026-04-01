@@ -1,242 +1,45 @@
-﻿// See https://aka.ms/new-console-template for more information
-
-using TS_AI_Bot;
-using TSLib;
-using TSLib.Audio;
-using TSLib.Full;
-using TSLib.Scheduler;
+﻿using TS_AI_Bot;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 using Serilog;
 
+// 1. 配置日志
 Log.Logger = new LoggerConfiguration().MinimumLevel.Debug().WriteTo
     .Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
     .CreateLogger();
 
+// 2. 读取配置
 var yamlContent = File.ReadAllText("config.yaml");
-using var scheduler = new DedicatedTaskScheduler(new TSLib.Helper.Id(1));
-var client = new TsFullClient(scheduler);
-
 var deserializer = new DeserializerBuilder().WithNamingConvention(PascalCaseNamingConvention.Instance).Build();
-
 var config = deserializer.Deserialize<AppSettings>(yamlContent);
 Log.Information("Config loaded!");
 
-// 生成身份
-var identity = TsCrypt.GenerateNewIdentity();
+// 3. 实例化机器人并启动
+var bot = new TsBot(config);
+await bot.StartAsync();
 
-// 连接
-var connData = new ConnectionDataFull(
-    address: config.TeamSpeak.Host,
-    identity: identity,
-    username: config.TeamSpeak.Username,
-    serverPassword: config.TeamSpeak.ServerPassword
-);
-
-var packetReader = new AudioPacketReader();
-var decoderPipe = new DecoderPipe();
-var wakeWordReceiver = new WakeWordReceiver(config.Picovoice.UsePico ? config.Picovoice.AccessKey : null);
-
-var ttsAudioProducer = new TtsAudioProducer();
-var tsAudioSender = new TsAudioSender(client);
-var volumePipe = new VolumePipe
-{
-    Volume = 0.45f
-};
-var encoderPipe = new EncoderPipe(Codec.OpusMusic);
-var doubaoTtsClient = new DoubaoTtsClient(config.DoubaoTts.AppId, config.DoubaoTts.AccessToken, config.DoubaoTts.Voice);
-
-CancellationTokenSource? ttsCts = null;
-
-var llmClient = new OmniLlmClient(config.ModelApi.Endpoint, config.ModelApi.LlmKey); 
-
-var safeScheduler = scheduler;
-
-client.OutStream = packetReader;
-packetReader.OutStream = decoderPipe;
-decoderPipe.OutStream = wakeWordReceiver;
-
-ttsAudioProducer.OutStream = volumePipe;
-volumePipe.OutStream = encoderPipe;
-encoderPipe.OutStream = tsAudioSender;
-
-var helloAudio = await doubaoTtsClient.SpeakTextAsync(config.Texts.HelloAudio, speedRate:config.DoubaoTts.Speed);
-var beepAudio = TtsAudioProducer.GenerateBeepPcm();
-
-wakeWordReceiver.OnAudioRecorded += async (userId, pcmData) =>
-{
-    Log.Information("Received audio data from user {UserId}, {Length} bytes total", userId, pcmData.Length);
-    _ = safeScheduler.InvokeAsync(async () =>
-    {
-        try
-        {
-            await ttsAudioProducer.PlayTtsAsync(beepAudio);
-        }
-        catch (Exception ex)
-        {
-            Log.Error("Fail to play beeping: {Exception}", ex);
-        }
-    });
-    if (pcmData.Length < 1)
-    {
-        const string noAudioNotice = "I didn't hear anything.";
-        var audio = await doubaoTtsClient.SpeakTextAsync(noAudioNotice);
-        await safeScheduler.InvokeAsync(async () =>
-        {
-            await ttsAudioProducer.PlayTtsAsync(audio);
-        });
-    }
-
-    try
-    {
-        var replyStream = llmClient.AskWithRawPcmStreamAsync(config.ModelApi.Model, config.Texts.UserPrompts, pcmData);
-
-        // Log.Information("Reply from the model: {Reply}", reply);
-        await safeScheduler.InvokeAsync(async () =>
-        {
-            
-            ttsCts?.Cancel();
-            ttsCts?.Dispose();
-
-            ttsCts = new CancellationTokenSource();
-            var token = ttsCts.Token;
-            // client.SendChannelMessage(reply);
-            
-            var audioStream = doubaoTtsClient.StreamTtsAsync(replyStream, cancellationToken: token, speedRate:config.DoubaoTts.Speed);
-
-            await foreach (var chunkAudio in audioStream.WithCancellation(token))
-            {
-                Log.Debug("Get audio chunk");
-                if (token.IsCancellationRequested)
-                    break;
-                await ttsAudioProducer.PlayTtsAsync(chunkAudio, token);
-            }
-        });
-    }
-    catch (OperationCanceledException)
-    {
-        // 捕获打断信号引发的取消异常，忽略
-        Log.Information("TTS playing was cancelled by user.");
-    }
-    catch (Exception ex)
-    {
-        Log.Error("Fail to request the model: {Exception}", ex);
-        // await safeScheduler.Invoke(() => { client.SendChannelMessage(ex.ToString()); });
-    }
-    finally
-    {
-        await Task.Delay(800);
-        wakeWordReceiver.ResumeListening();
-    }
-};
-
-wakeWordReceiver.OnWakeWordDetected += (userId) =>
-{
-    // 使用弃元 `_` 来触发异步任务，不阻塞当前线程，一边播放一边录音
-    _ = safeScheduler.InvokeAsync(async () =>
-    {
-        try
-        {
-            var clientId = ClientId.To(userId);
-            var infoResult = await client.ClientInfo(clientId);
-
-            if (infoResult.Ok)
-            {
-                var info = infoResult.Value;
-
-                Log.Information("{Name} waked me up!", info.Name);
-
-                var responseAudio = await doubaoTtsClient.SpeakTextAsync(info.Name + config.Texts.ResponseAudio, speedRate:config.DoubaoTts.Speed);
-                
-                await ttsAudioProducer.PlayTtsAsync(responseAudio);
-            }
-            else
-            {
-                throw new Exception(infoResult.Error.Message);
-            }
-        }
-        catch (Exception ex)
-        {
-            Log.Error("Fail to play sound: {Exception}", ex);
-        }
-    });
-};
-
-client.OnEachTextMessage += (_, message) =>
-{
-    if (message.Target == TextMessageTargetMode.Channel)
-    {
-        if (message.Message.Trim().ToLower() == "#stop")
-        {
-            Log.Information("{Name} shut me up.", message.InvokerName);
-            
-            ttsCts?.Cancel();
-            return;
-        }
-        
-        Log.Information("{Name}: {Message}", message.InvokerName, message.Message);
-    }
-};
-
-await scheduler.InvokeAsync(async () =>
-{
-    try
-    {
-        await client.Connect(connData);
-        await Task.Delay(500);
-
-        // 发送消息
-
-        await client.SendChannelMessage(config.Texts.HelloAudio);
-        await ttsAudioProducer.PlayTtsAsync(helloAudio);
-        Log.Information("Bot initialized!");
-    }
-    catch (Exception ex)
-    {
-        Log.Fatal("Unable to connect: {Exception}", ex);
-    }
-});
-
+// 4. 挂载系统退出信号 
 var shutdownTcs = new TaskCompletionSource();
 var cleanupFinishedTcs = new TaskCompletionSource();
 
 AppDomain.CurrentDomain.ProcessExit += (_, _) =>
 {
-    Log.Information("Shutting down...");
+    Log.Information("Shutting down (ProcessExit)...");
     shutdownTcs.TrySetResult();
-
-    cleanupFinishedTcs.Task.Wait();
+    cleanupFinishedTcs.Task.Wait(); 
 };
 
 Console.CancelKeyPress += (_, e) =>
 {
-    Log.Information("Shutting down...");
+    Log.Information("Shutting down (Ctrl+C)...");
     e.Cancel = true;
     shutdownTcs.TrySetResult();
 };
 
+// 5. 将主线程挂起，保持程序运行
 await shutdownTcs.Task;
 
-Log.Information("Disconnecting...");
-
-await safeScheduler.InvokeAsync(async () =>
-{
-    try
-    {
-        // 停止监听唤醒词
-        wakeWordReceiver.Dispose();
-        
-        // 断开连接
-        if (client.Connected)
-        {
-            await client.Disconnect();
-        }
-        client.Dispose();
-    }
-    catch (Exception ex)
-    {
-        Log.Error("Error when disconnecting: {Exception}", ex);
-    }
-});
+// 6. 收到退出信号，开始清理资源
+await bot.DisposeAsync();
 
 cleanupFinishedTcs.TrySetResult();
