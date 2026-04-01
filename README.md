@@ -1,29 +1,20 @@
-# TS-AI-Bot Repository
+# TS-AI-Bot
 
-> Voice AI assistant for TeamSpeak — wake-word activated, LLM-powered, with Azure TTS
-
----
-
-## Projects
-
-| Project                                                          | Type | Description |
-|------------------------------------------------------------------|---|---|
-| **TS-AI-Bot**                                                    | Application (.NET 8) | Main bot — wake word, LLM, TTS, TeamSpeak voice |
-| **[TSLib](https://github.com/Splamy/TS3AudioBot)**               | Library (.NET Standard 2.0/2.1) | TeamSpeak 3/5 voice + query client library |
-| **[NanoWakeWord](https://github.com/samartzidis/NanoWakeWord)** | Library (.NET Standard 2.0) | Local ONNX-based wake-word detection engine |
+> TeamSpeak Voice AI Assistant — Local wake-word detection + Multimodal LLM + Doubao TTS
 
 ---
 
-## TS-AI-Bot — At a Glance
+## Overview
 
 TS-AI-Bot connects to a TeamSpeak server as a native voice client. When a user speaks the configured wake word, it:
 
-1. Records the user's spoken query
-2. Sends it (as audio + text prompt) to a OpenAI-compatible LLM
-3. Reads the reply aloud using Azure Cognitive Services TTS
-4. Sends the audio back over TeamSpeak voice
+1. **Wake Detection** — Local ONNX model (NanoWakeWord or Porcupine) detects the wake word
+2. **Voice Recording** — Starts recording after wake word; stops on silence detection
+3. **Multimodal Inference** — Sends audio + text prompt to an OpenAI-compatible multimodal LLM (with `input_audio` support)
+4. **Streaming TTS** — LLM response is streamed in real-time to **Doubao TTS** (ByteDance) for PCM audio synthesis
+5. **TeamSpeak Voice Output** — PCM is Opus-Music encoded and sent via TeamSpeak voice channel
 
-**Key technologies:** .NET 8, TSLib, Azure Cognitive Services Speech, NanoWakeWord (ONNX), Serilog
+**Tech stack:** .NET 8 / C#, TSLib, Doubao TTS (WebSocket streaming), NanoWakeWord (ONNX), Serilog
 
 ---
 
@@ -31,37 +22,37 @@ TS-AI-Bot connects to a TeamSpeak server as a native voice client. When a user s
 
 ```
 ts-ai-bot/
-├── TS-AI-Bot/                   # Main application
-│   ├── Program.cs              # Entry point & pipeline wiring
-│   ├── OmniLlmClient.cs        # LLM API client (audio + text)
-│   ├── AzureTtsClient.cs        # Azure TTS (streaming PCM)
-│   ├── TtsAudioProducer.cs      # Frame-accurate PCM player
-│   ├── TsAudioSender.cs         # PCM → TeamSpeak bridge
-│   ├── WakeWordDetector.cs      # Porcupine / NanoWakeWord wrapper
-│   ├── WakeWordReceiver.cs      # Pipeline node: wake word + capture
-│   ├── AppSettings.cs           # YAML config → C# types
-│   ├── config.yaml             # Configuration file (gitignored)
-│   ├── Dockerfile               # Multi-stage Docker build
-│   └── models/                  # ONNX wake-word models
+├── TS-AI-Bot/                        # Main application (.NET 8)
+│   ├── Program.cs                    # Entry: config loading + startup + signal handling
+│   ├── TsBot.cs                      # Core bot class, wires all components together
+│   ├── OmniLlmClient.cs              # Multimodal LLM client (audio + text, streaming output)
+│   ├── DoubaoTtsClient.cs            # Doubao TTS client (WebSocket streaming)
+│   ├── TtsAudioProducer.cs           # Frame-accurate PCM player (streaming merge)
+│   ├── TsAudioSender.cs              # PCM → TeamSpeak voice bridge
+│   ├── WakeWordDetector.cs           # NanoWakeWord / Porcupine wrapper
+│   ├── WakeWordReceiver.cs           # Wake word pipeline node (detect + record + VAD)
+│   ├── AppSettings.cs                # YAML config → C# types
+│   ├── config.yaml.example           # Sample config file
+│   └── models/                       # ONNX wake-word models
 │
-├── TSLib/                       # TeamSpeak client library
+├── TSLib/                            # TeamSpeak client library
 │   ├── src/TSLib/
-│   │   ├── Full/                # TsFullClient (voice protocol)
-│   │   ├── Query/               # TsQueryClient (server query)
-│   │   ├── Audio/               # Opus encode/decode, audio pipes
-│   │   ├── Messages/            # TeamSpeak protocol messages
-│   │   ├── Commands/            # Command parser
-│   │   ├── Scheduler/           # DedicatedTaskScheduler
-│   │   └── Helper/              # TsCrypt, ID utilities
+│   │   ├── Full/                     # TsFullClient (voice protocol)
+│   │   ├── Query/                    # TsQueryClient (server query)
+│   │   ├── Audio/                    # Opus encode/decode, audio pipes
+│   │   ├── Messages/                 # TeamSpeak protocol messages
+│   │   ├── Commands/                 # Command parser
+│   │   ├── Scheduler/                # DedicatedTaskScheduler
+│   │   └── Helper/                   # TsCrypt, ID utilities
 │   └── docs/
-│       └── TSLib-API-Documentation.md
 │
-├── NanoWakeWord/               # Wake-word engine
-│   ├── WakeWordRuntime.cs      # ONNX inference pipeline
+├── NanoWakeWord/                    # Local ONNX wake-word engine
+│   ├── WakeWordRuntime.cs           # ONNX inference pipeline
 │   ├── WakeWordUtil.cs
 │   └── NanoWakeWord.csproj
 │
-└── TS-AI-Bot.sln               # Visual Studio / dotnet solution
+├── TS-AI-Bot.sln                    # Visual Studio / dotnet solution
+└── TS_AI_Bot.Tests/                 # Unit tests
 ```
 
 ---
@@ -74,12 +65,11 @@ dotnet build TS-AI-Bot/TS-AI-Bot.csproj -c Release
 
 # Configure
 cp TS-AI-Bot/config.yaml.example TS-AI-Bot/config.yaml
-# Edit config.yaml with your TeamSpeak, Azure, and LLM credentials
+# Edit config.yaml with your TeamSpeak, LLM, and Doubao TTS credentials
 
 # Run
 dotnet run --project TS-AI-Bot/TS-AI-Bot.csproj -c Release
 ```
-
 
 ---
 
@@ -88,47 +78,97 @@ dotnet run --project TS-AI-Bot/TS-AI-Bot.csproj -c Release
 All configuration is in `config.yaml`:
 
 ```yaml
-TeamSpeak:
-  Host: "127.0.0.1:9987"
-  Username: "TS-AI-Bot"
-  ServerPassword: ""
-
+# Wake word (Porcupine or NanoWakeWord)
 Picovoice:
   UsePico: false
-  AccessKey: ""
+  AccessKey: "Your key"
 
+# TeamSpeak server
+TeamSpeak:
+  Host: "127.0.0.1"
+  Username: "[bot] bot name"
+  ServerPassword: "114514"
+
+# Multimodal LLM (OpenAI-compatible API, must support input_audio)
 ModelApi:
-  Endpoint: "https://your-api/v1/chat/completions"
-  LlmKey: "sk-..."
-  Model: "gpt-4o-audio"
+  LlmKey: "Your key"
+  Model: "mimo-v2-omni"
+  Endpoint: "https://api.xiaomimimo.com/v1/chat/completions"
 
-AzureTts:
-  Endpoint: "https://your-resource.cognitiveservices.azure.com/tts/cognitiveservices/v1"
-  Key: "your-azure-key"
-  MaxConcurrency: 10
-  MaxTextLength: 75
-  Speed: 1.0
+# Doubao TTS (ByteDance, WebSocket streaming)
+DoubaoTts:
+  AppId: ""
+  AccessToken: ""
+  Voice: "zh_female_meilinvyou_uranus_bigtts"
+  Speed: 1.15
 
+# Text configuration
 Texts:
-  HelloAudio: "Bot is online!"
-  UserPrompts: "Please answer concisely."
-  ResponseAudio: ", how can I help?"
+  HelloAudio: "我来啦！"
+  UserPrompts: "Please converse with the person in the audio. If you cannot identify a normal human voice, say 'I didn't catch that'. Reply in the same language as the audio. Do not use any markdown formatting."
+  ResponseAudio: "，请讲！"
 ```
 
 ---
 
-## Supported Features
+## Architecture
+
+```
+User speaks
+   ↓
+WakeWordReceiver (wake detection + recording + silence VAD)
+   ↓ PCM audio
+OmniLlmClient.AskWithRawPcmStreamAsync() (multimodal LLM, streaming text)
+   ↓ text stream
+DoubaoTtsClient.StreamTtsAsync() (Doubao TTS, WebSocket → PCM stream)
+   ↓ PCM stream
+TtsAudioProducer.PlayTtsAsync() (frame-accurate playback, stream merge + cancel)
+   ↓ volume + Opus encoding
+TsAudioSender → TeamSpeak voice channel
+   ↓
+User hears voice reply
+```
+
+### Component Responsibilities
+
+| Component | Responsibility |
+|---|---|
+| `WakeWordReceiver` | Pipeline node: audio packets in, wake events + recording data out |
+| `OmniLlmClient` | Calls multimodal LLM (audio + text prompt), streams text response |
+| `DoubaoTtsClient` | Doubao TTS WebSocket client, converts text stream to real-time PCM audio |
+| `TtsAudioProducer` | PCM frame-level playback control, supports stream merge and cancellation |
+| `TsAudioSender` | Sends PCM via TSLib → TeamSpeak voice channel |
+| `TsBot` | Main orchestrator: wires components, binds events, handles business logic |
+
+---
+
+## Feature Status
 
 | Feature | Status | Notes |
 |---|---|---|
-| Wake word detection | ✅ | Porcupine or NanoWakeWord (local ONNX) |
-| Voice recording | ✅ | After wake word, until silence |
-| LLM voice query | ✅ | OpenAI-compatible API with `input_audio` support |
-| Streaming TTS | ✅ | Azure Cognitive Services, interruptible via `CancellationToken` |
-| TeamSpeak voice out | ✅ | Opus-music encoded, stereo |
-| Text commands | ✅ | `#stop` interrupts TTS playback |
-| Docker deployment | ✅ | Multi-stage build, no .NET SDK in runtime image |
-| ARM64 (Linux) | ⚠️ | Not tested; likely requires libopus to be installed separately |
+| Local wake-word detection | ✅ | NanoWakeWord (ONNX) or Porcupine |
+| Voice recording | ✅ | Starts after wake, ends on silence |
+| Multimodal LLM voice QA | ✅ | OpenAI-compatible API + `input_audio` |
+| Streaming TTS | ✅ | Doubao TTS, WebSocket real-time, interruptible |
+| TeamSpeak voice output | ✅ | Opus-Music encoded, stereo |
+| User response audio cache | ✅ | Pre-synthesized on first wake to speed up response |
+| Text command `#stop` | ✅ | Interrupts current TTS playback |
+| Logging | ✅ | Serilog + Console output |
+
+---
+
+## Recent Commits
+
+| Commit | Description |
+|---|---|
+| `f935fda` | Fix logic for waiting after wake before recording |
+| `8552ea4` | Add caching to improve response speed |
+| `3a8c207` | Fix TTS no-audio bug |
+| `e584d9d` | Refactor main program into a class |
+| `838cdb6` | Update config example |
+| `8d16588` | **Switch to Doubao TTS**, remove Azure |
+| `f22c402` | LLM output changed to streaming |
+| `59e08de` | Add Apache License 2.0 |
 
 ---
 
@@ -140,11 +180,11 @@ Texts:
 |---|---|---|
 | TSLib | (local) | TeamSpeak protocol |
 | NanoWakeWord | (local) | Wake-word detection |
-| Microsoft.CognitiveServices.Speech | 1.48.2 | Azure TTS |
+| Microsoft.CognitiveServices.Speech | 1.48.2 | — (legacy dep) |
 | Porcupine | 4.0.2 | Picovoice (optional) |
 | Serilog | 4.3.1 | Logging |
-| Serilog.Sinks.Console | 6.1.1 | Console log output |
-| YamlDotNet | 16.3.0 | YAML parsing |
+| Serilog.Sinks.Console | 6.1.1 | Console logging |
+| YamlDotNet | 16.3.0 | YAML config parsing |
 
 ### TSLib
 
@@ -161,8 +201,6 @@ Texts:
 
 ## License
 
-See individual project licenses. TSLib is OSL-3.0. TS-AI-Bot and NanoWakeWord are provided as-is.
+Apache License 2.0 — see [LICENSE](LICENSE)
 
----
-
-*Maintained: 2026-03-31*
+TSLib is OSL-3.0. NanoWakeWord copyright by original authors.
