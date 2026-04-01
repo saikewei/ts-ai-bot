@@ -12,7 +12,7 @@ TS-AI-Bot connects to a TeamSpeak server as a native voice client. When a user s
    - **NanoWakeWord** (default, local ONNX inference, based on [OpenWakeWord](https://github.com/dscripka/openWakeWord), free and open-source)
    - **Porcupine** (Picovoice, commercial product; requires a Picovoice account and AccessKey, may involve fees)
 2. **Voice Recording** — Starts recording after wake word; stops on silence detection
-3. **Multimodal Inference** — Sends audio + text prompt to an OpenAI-compatible multimodal LLM (with `input_audio` support)
+3. **Multimodal Inference** — Sends audio + text prompt to an OpenAI-compatible **multimodal LLM** that supports audio input (e.g. [mimo-v2-omni](https://platform.xiaomimimo.com) by Xiaomi, which is what this project uses)
 4. **Streaming TTS** — LLM response is streamed in real-time to **Doubao TTS** (ByteDance) for PCM audio synthesis
 5. **TeamSpeak Voice Output** — PCM is Opus-Music encoded and sent via TeamSpeak voice channel
 
@@ -91,7 +91,7 @@ TeamSpeak:
   Username: "[bot] bot name"
   ServerPassword: "114514"
 
-# Multimodal LLM (OpenAI-compatible API, must support input_audio)
+# Multimodal LLM (OpenAI-compatible API, must support audio input; e.g. mimo-v2-omni by Xiaomi)
 ModelApi:
   LlmKey: "Your key"
   Model: "mimo-v2-omni"
@@ -150,7 +150,7 @@ User hears voice reply
 |---|---|---|
 | Local wake-word detection | ✅ | NanoWakeWord (ONNX, based on OpenWakeWord) or Porcupine (commercial, Picovoice) |
 | Voice recording | ✅ | Starts after wake, ends on silence |
-| Multimodal LLM voice QA | ✅ | OpenAI-compatible API + `input_audio` |
+| Multimodal LLM voice QA | ✅ | OpenAI-compatible API with audio input support (e.g. Xiaomi mimo-v2-omni) |
 | Streaming TTS | ✅ | Doubao TTS, WebSocket real-time, interruptible |
 | TeamSpeak voice output | ✅ | Opus-Music encoded, stereo |
 | User response audio cache | ✅ | Pre-synthesized on first wake to speed up response |
