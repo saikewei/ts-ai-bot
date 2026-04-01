@@ -1,6 +1,6 @@
 # TS-AI-Bot
 
-> TeamSpeak Voice AI Assistant — Local wake-word detection + Multimodal LLM + Doubao TTS
+> **[中文版 README](./README_zh.md)** | TeamSpeak Voice AI Assistant — Local wake-word detection + Multimodal LLM + Doubao TTS
 
 ---
 
