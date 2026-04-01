@@ -1,3 +1,5 @@
+**[English](./README.md)** | 中文
+
 # TS-AI-Bot
 
 > TeamSpeak 语音 AI 助手 — 本地唤醒词检测 + 多模态大模型 + 豆包 TTS 语音合成
@@ -8,7 +10,9 @@
 
 TS-AI-Bot 以语音客户端身份连接 TeamSpeak 服务器。用户说出唤醒词后，机器人：
 
-1. **唤醒检测** — 本地 ONNX 模型（NanoWakeWord 或 Porcupine）识别唤醒词
+1. **唤醒检测** — 唤醒词检测支持两种引擎：
+   - **NanoWakeWord**（默认，本地 ONNX 推理，基于开源项目 [OpenWakeWord](https://github.com/dscripka/openWakeWord)，免费）
+   - **Porcupine**（Picovoice，商业产品，需注册 Picovoice 账号并获取 AccessKey，可能收费）
 2. **语音采集** — 唤醒后开始录制用户说话，检测静音后结束
 3. **多模态推理** — 将音频 + 文本提示发送给 OpenAI 兼容的多模态 LLM（支持 `input_audio`）
 4. **流式语音合成** — LLM 回复通过**豆包 TTS**（字节跳动）实时流式合成 PCM 音频
@@ -46,7 +50,7 @@ ts-ai-bot/
 │   │   └── Helper/                   # TsCrypt，ID 工具
 │   └── docs/
 │
-├── NanoWakeWord/                    # 本地 ONNX 唤醒词引擎
+├── NanoWakeWord/                    # 本地 ONNX 唤醒词引擎（基于 OpenWakeWord）
 │   ├── WakeWordRuntime.cs           # ONNX 推理管道
 │   ├── WakeWordUtil.cs
 │   └── NanoWakeWord.csproj
@@ -146,7 +150,7 @@ TsAudioSender → TeamSpeak 语音通道
 
 | 功能 | 状态 | 说明 |
 |---|---|---|
-| 本地唤醒词检测 | ✅ | NanoWakeWord（ONNX）或 Porcupine |
+| 本地唤醒词检测 | ✅ | NanoWakeWord（ONNX，基于 OpenWakeWord）或 Porcupine（商业，Picovoice） |
 | 语音录制 | ✅ | 唤醒后开始，检测静音结束 |
 | 多模态 LLM 语音问答 | ✅ | OpenAI 兼容 API + `input_audio` 支持 |
 | 流式 TTS | ✅ | 豆包 TTS，WebSocket 实时流式，可中断 |

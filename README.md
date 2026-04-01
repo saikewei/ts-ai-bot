@@ -1,14 +1,16 @@
+**[中文](./README_zh.md)** | English
+
 # TS-AI-Bot
 
-> **[中文版 README](./README_zh.md)** | TeamSpeak Voice AI Assistant — Local wake-word detection + Multimodal LLM + Doubao TTS
-
----
+> TeamSpeak Voice AI Assistant — Local wake-word detection + Multimodal LLM + Doubao TTS
 
 ## Overview
 
 TS-AI-Bot connects to a TeamSpeak server as a native voice client. When a user speaks the configured wake word, it:
 
-1. **Wake Detection** — Local ONNX model (NanoWakeWord or Porcupine) detects the wake word
+1. **Wake Detection** — Wake word is detected by either:
+   - **NanoWakeWord** (default, local ONNX inference, based on [OpenWakeWord](https://github.com/dscripka/openWakeWord), free and open-source)
+   - **Porcupine** (Picovoice, commercial product; requires a Picovoice account and AccessKey, may involve fees)
 2. **Voice Recording** — Starts recording after wake word; stops on silence detection
 3. **Multimodal Inference** — Sends audio + text prompt to an OpenAI-compatible multimodal LLM (with `input_audio` support)
 4. **Streaming TTS** — LLM response is streamed in real-time to **Doubao TTS** (ByteDance) for PCM audio synthesis
@@ -46,7 +48,7 @@ ts-ai-bot/
 │   │   └── Helper/                   # TsCrypt, ID utilities
 │   └── docs/
 │
-├── NanoWakeWord/                    # Local ONNX wake-word engine
+├── NanoWakeWord/                    # Local ONNX wake-word engine (based on OpenWakeWord)
 │   ├── WakeWordRuntime.cs           # ONNX inference pipeline
 │   ├── WakeWordUtil.cs
 │   └── NanoWakeWord.csproj
@@ -146,7 +148,7 @@ User hears voice reply
 
 | Feature | Status | Notes |
 |---|---|---|
-| Local wake-word detection | ✅ | NanoWakeWord (ONNX) or Porcupine |
+| Local wake-word detection | ✅ | NanoWakeWord (ONNX, based on OpenWakeWord) or Porcupine (commercial, Picovoice) |
 | Voice recording | ✅ | Starts after wake, ends on silence |
 | Multimodal LLM voice QA | ✅ | OpenAI-compatible API + `input_audio` |
 | Streaming TTS | ✅ | Doubao TTS, WebSocket real-time, interruptible |
@@ -181,7 +183,7 @@ User hears voice reply
 | TSLib | (local) | TeamSpeak protocol |
 | NanoWakeWord | (local) | Wake-word detection |
 | Microsoft.CognitiveServices.Speech | 1.48.2 | — (legacy dep) |
-| Porcupine | 4.0.2 | Picovoice (optional) |
+| Porcupine | 4.0.2 | Picovoice wake-word engine (commercial, requires AccessKey) |
 | Serilog | 4.3.1 | Logging |
 | Serilog.Sinks.Console | 6.1.1 | Console logging |
 | YamlDotNet | 16.3.0 | YAML config parsing |
