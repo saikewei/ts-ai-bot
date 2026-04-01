@@ -65,7 +65,19 @@ public class WakeWordReceiver : IAudioPassiveConsumer, IDisposable
             Log.Information("Resume listening.");
         }
     }
-
+    
+    public void StartRecordingUser(ushort userId)
+    {
+        lock (_lockObj)
+        {
+            _activeSpeakerId = userId;
+            _audioBuffer = new MemoryStream();
+            _silenceTimer = Stopwatch.StartNew();
+            _isProcessing = false; 
+        }
+        Log.Information("Start listening to user {UserId}.", userId);
+    }
+    
     private async Task MonitorSilenceAsync()
     {
         while (!_cts.IsCancellationRequested)
@@ -118,20 +130,6 @@ public class WakeWordReceiver : IAudioPassiveConsumer, IDisposable
             if (!isFirstWake) return;
             // 2. 触发事件，通知主程序去查询名字并播放 TTS
             OnWakeWordDetected?.Invoke(wakedUserId);
-
-            await Task.Delay(2500);
-
-            lock (_lockObj)
-            {
-                _activeSpeakerId = wakedUserId;
-                _audioBuffer = new MemoryStream();
-                _silenceTimer = Stopwatch.StartNew();
-                    
-                // 解除全局处理锁
-                _isProcessing = false; 
-            }
-                
-            Log.Information("Start listening.");
         }
         catch (Exception ex)
         {

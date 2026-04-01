@@ -178,22 +178,30 @@ public class TsBot : IAsyncDisposable
                 if (!_responseAudioCache.TryGetValue(userId, out var responseAudio))
                 {
                     Log.Warning("Cache miss for {Name}, synthesizing on the fly...", name);
-                    
-                    // 2. 现场异步推理 (保险机制)
                     responseAudio = await _doubaoTtsClient.SpeakTextAsync(
                         name + _config.Texts.ResponseAudio, 
                         speedRate: _config.DoubaoTts.Speed);
-                    
-                    // 3. 把现场生成的语音加进缓存，下次就不需要再推理了
                     _responseAudioCache.TryAdd(userId, responseAudio);
                 }
                 
-                // 4. 播放音频
+                // 2. 精准计算这段 PCM 音频的物理时长
+                int durationMs = (int)(responseAudio.Length * 1000.0 / 96000.0);
+                Log.Debug("Calculated audio duration: {Duration}ms, waiting...", durationMs);
+
+                // 3. 播放音频
                 await _ttsAudioProducer.PlayTtsAsync(responseAudio);
+                
+                // 4. 动态精准等待 
+                // await Task.Delay(durationMs - 300);
+                
+                // 5. 时间到了！精准发令，开始录制这个用户的声音！
+                _wakeWordReceiver.StartRecordingUser(userId);
             }
             catch (Exception ex)
             {
                 Log.Error("Fail to play sound: {Exception}", ex);
+                // 异常情况下，也要记得把锁释放，避免死锁
+                _wakeWordReceiver.ResumeListening();
             }
         }); 
     }
