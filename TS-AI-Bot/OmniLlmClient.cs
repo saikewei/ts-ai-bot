@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 
@@ -67,10 +68,10 @@ public class OmniLlmClient : IDisposable
         // 4. 纯正的中文 System Prompt（明确要求中文回复）
         var systemPrompt = $"你是MiMo，由小米开发的人工智能助手。今天是：{currentDate}。你的知识截止日期是2024年12月。请始终使用流畅、自然的语言与用户进行交流。";
 
-        // 5. 完全按照你要求的结构组装 Payload
+        // 5. 结构组装 Payload
         var requestPayload = new
         {
-            model = model,
+            model,
             messages = new object[]
             {
                 // 插入 System Prompt
@@ -137,6 +138,152 @@ public class OmniLlmClient : IDisposable
             .GetString();
 
         return reply ?? string.Empty;
+    }
+    /// <summary>
+    /// 接口 3：流式请求大模型 (接收内存 PCM 裸流，返回异步文本流)
+    /// </summary>
+    public async IAsyncEnumerable<string> AskWithRawPcmStreamAsync(
+        string model, 
+        string prompt, 
+        byte[] pcmData, 
+        int sampleRate = 48000, 
+        short channels = 2, 
+        short bitsPerSample = 16, 
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        // 1. 给 PCM 加上 WAV 头
+        var wavBytes = WrapPcmToWav(pcmData, sampleRate, channels, bitsPerSample);
+        
+        // 2. 转为 Base64
+        var base64Audio = Convert.ToBase64String(wavBytes);
+
+        // 3. 异步迭代私有流式方法
+        await foreach (var chunk in SendAudioRequestStreamAsync(model, prompt, base64Audio, "wav", cancellationToken))
+        {
+            yield return chunk;
+        }
+    }
+    /// <summary>
+    /// 接口 4：流式请求大模型 (接受本地音频文件)
+    /// </summary>
+    public async IAsyncEnumerable<string> AskWithAudioFileStreamAsync(
+        string model, 
+        string prompt, 
+        string filePath, 
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        if (!File.Exists(filePath))
+            throw new FileNotFoundException($"找不到音频文件: {filePath}");
+
+        var fileBytes = await File.ReadAllBytesAsync(filePath, cancellationToken);
+        var base64Audio = Convert.ToBase64String(fileBytes);
+        var format = Path.GetExtension(filePath).TrimStart('.').ToLower();
+
+        await foreach (var chunk in SendAudioRequestStreamAsync(model, prompt, base64Audio, format, cancellationToken))
+        {
+            yield return chunk;
+        }
+    }
+
+    /// <summary>
+    /// 私有核心流式请求方法
+    /// </summary>
+    private async IAsyncEnumerable<string> SendAudioRequestStreamAsync(
+        string model, 
+        string prompt, 
+        string base64Audio, 
+        string format, 
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var mimeType = format.ToLower() switch
+        {
+            "mp3" => "audio/mpeg",
+            "wav" => "audio/wav",
+            "ogg" => "audio/ogg",
+            _ => $"audio/{format}"
+        };
+
+        var dataUri = $"data:{mimeType};base64,{base64Audio}";
+        var currentDate = DateTime.Now.ToString("yyyy年MM月dd日，dddd");
+        var systemPrompt = $"你是MiMo，由小米开发的人工智能助手。今天是：{currentDate}。你的知识截止日期是2024年12月。请始终使用流畅、自然的语言与用户进行交流。";
+
+        var requestPayload = new
+        {
+            model,
+            stream = true, // 🌟 关键：告诉大模型开启流式传输
+            messages = new object[]
+            {
+                new { role = "system", content = systemPrompt },
+                new
+                {
+                    role = "user",
+                    content = new object[]
+                    {
+                        new { type = "input_audio", input_audio = new { data = dataUri } },
+                        new { type = "text", text = prompt }
+                    }
+                }
+            }
+        };
+
+        var jsonString = JsonSerializer.Serialize(requestPayload);
+        using var request = new HttpRequestMessage(HttpMethod.Post, _endpoint);
+        request.Content = new StringContent(jsonString, Encoding.UTF8, "application/json");
+
+        // 🌟 核心性能优化：ResponseHeadersRead 告诉 HttpClient 只要拿到响应头就开始返回，不要等整个 Body 下载完！
+        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
+            throw new Exception($"流式 API 请求失败! 状态码: {response.StatusCode}. 详情: {errorContent}");
+        }
+
+        // 获取响应流并逐行读取 (Server-Sent Events 标准格式)
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var reader = new StreamReader(stream);
+
+        while (!reader.EndOfStream && !cancellationToken.IsCancellationRequested)
+        {
+            var line = await reader.ReadLineAsync(cancellationToken);
+            
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            
+            // SSE 的数据行都是以 "data: " 开头的
+            if (line.StartsWith("data: "))
+            {
+                var data = line.Substring(6).Trim();
+                
+                // 收到结束标志符，退出流
+                if (data == "[DONE]") break;
+
+                string chunkText = string.Empty;
+                try
+                {
+                    using var jsonDoc = JsonDocument.Parse(data);
+                    var choices = jsonDoc.RootElement.GetProperty("choices");
+                    if (choices.GetArrayLength() > 0)
+                    {
+                        var delta = choices[0].GetProperty("delta");
+                        
+                        // 🌟 只提取 content (说话内容)，忽略 reasoning_content (思考过程)
+                        if (delta.TryGetProperty("content", out var contentElement) && contentElement.ValueKind == JsonValueKind.String)
+                        {
+                            chunkText = contentElement.GetString() ?? string.Empty;
+                        }
+                    }
+                }
+                catch (JsonException)
+                {
+                    // 忽略个别不完整的 JSON 块解析异常，保证流不断
+                }
+
+                if (!string.IsNullOrEmpty(chunkText))
+                {
+                    yield return chunkText; // 将解析出的片段实时扔给外部
+                }
+            }
+        }
     }
     
     private static byte[] WrapPcmToWav(byte[] pcmData, int sampleRate, short channels, short bitsPerSample)
