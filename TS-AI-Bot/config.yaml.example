@@ -14,15 +14,14 @@ ModelApi:
   Model: "mimo-v2-omni"
   Endpoint: "https://api.xiaomimimo.com/v1/chat/completions"
   
-AzureTts:
-  Endpoint: "https://eastasia.tts.speech.microsoft.com"
-  Key: "your key"
-  MaxTextLength: 75
-  MaxConcurrency: 10
-  Speed: 1.25
-  
 Texts:
   HelloAudio: "我来啦！"
   UserPrompts: "请和音频中的人对话。如果音频中无法识别正常的人声，请说“我没听清”。音频中的人用什么语言你就用什么语言回复。请不要使用任何markdown语法，仅使用正常的文字和标点。"
   ResponseAudio: "请讲！"
+  
+DoubaoTts:
+  AppId: ""
+  AccessToken: ""
+  Voice: "zh_female_meilinvyou_uranus_bigtts"
+  Speed: 1.15
   
