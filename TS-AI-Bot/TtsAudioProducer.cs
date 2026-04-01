@@ -35,7 +35,7 @@ public class TtsAudioProducer : IAudioActiveProducer
         // 启动高精度计时器
         var stopwatch = Stopwatch.StartNew();
 
-        Log.Information("Streaming audio.");
+        Log.Debug("Streaming audio.");
 
         // 3. 核心推流循环
         while (offset < stereoPcmData.Length && !cancellationToken.IsCancellationRequested)

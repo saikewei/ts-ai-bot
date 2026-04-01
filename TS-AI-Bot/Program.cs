@@ -38,13 +38,13 @@ var decoderPipe = new DecoderPipe();
 var wakeWordReceiver = new WakeWordReceiver(config.Picovoice.UsePico ? config.Picovoice.AccessKey : null);
 
 var ttsAudioProducer = new TtsAudioProducer();
-var azureTtsClient = new AzureTtsClient(config.AzureTts.Endpoint, config.AzureTts.Key);
 var tsAudioSender = new TsAudioSender(client);
 var volumePipe = new VolumePipe
 {
     Volume = 0.45f
 };
 var encoderPipe = new EncoderPipe(Codec.OpusMusic);
+var doubaoTtsClient = new DoubaoTtsClient(config.DoubaoTts.AppId, config.DoubaoTts.AccessToken, config.DoubaoTts.Voice);
 
 CancellationTokenSource? ttsCts = null;
 
@@ -60,8 +60,7 @@ ttsAudioProducer.OutStream = volumePipe;
 volumePipe.OutStream = encoderPipe;
 encoderPipe.OutStream = tsAudioSender;
 
-var helloAudio = await azureTtsClient.TextToSpeechAsync(config.Texts.HelloAudio);
-// var wakeFeedbackAudio = await azureTtsClient.TextToSpeechAsync(config.Texts.ResponseAudio);
+var helloAudio = await doubaoTtsClient.SpeakTextAsync(config.Texts.HelloAudio, speedRate:config.DoubaoTts.Speed);
 var beepAudio = TtsAudioProducer.GenerateBeepPcm();
 
 wakeWordReceiver.OnAudioRecorded += async (userId, pcmData) =>
@@ -78,14 +77,21 @@ wakeWordReceiver.OnAudioRecorded += async (userId, pcmData) =>
             Log.Error("Fail to play beeping: {Exception}", ex);
         }
     });
+    if (pcmData.Length < 1)
+    {
+        const string noAudioNotice = "I didn't hear anything.";
+        var audio = await doubaoTtsClient.SpeakTextAsync(noAudioNotice);
+        await safeScheduler.InvokeAsync(async () =>
+        {
+            await ttsAudioProducer.PlayTtsAsync(audio);
+        });
+    }
 
     try
     {
-        string reply = "No Audio!";
-        if (pcmData.Length > 0)
-            reply = await llmClient.AskWithRawPcmAsync(config.ModelApi.Model,config.Texts.UserPrompts, pcmData);
+        var replyStream = llmClient.AskWithRawPcmStreamAsync(config.ModelApi.Model, config.Texts.UserPrompts, pcmData);
 
-        Log.Information("Reply from the model: {Reply}", reply);
+        // Log.Information("Reply from the model: {Reply}", reply);
         await safeScheduler.InvokeAsync(async () =>
         {
             
@@ -95,18 +101,12 @@ wakeWordReceiver.OnAudioRecorded += async (userId, pcmData) =>
             ttsCts = new CancellationTokenSource();
             var token = ttsCts.Token;
             // client.SendChannelMessage(reply);
-            // var audio = await azureTtsClient.TextToSpeechLongAsync(reply, config.AzureTts.MaxConcurrency, config.AzureTts.MaxTextLength, rateMultiplier: config.AzureTts.Speed);
-            // await ttsAudioProducer.PlayTtsAsync(audio, ttsCts.Token);
-
-            var audioStream = azureTtsClient.TextToSpeechStreamAsync(
-                reply,
-                config.AzureTts.MaxConcurrency,
-                config.AzureTts.MaxTextLength,
-                config.AzureTts.Speed,
-                token);
+            
+            var audioStream = doubaoTtsClient.StreamTtsAsync(replyStream, cancellationToken: token, speedRate:config.DoubaoTts.Speed);
 
             await foreach (var chunkAudio in audioStream.WithCancellation(token))
             {
+                Log.Debug("Get audio chunk");
                 if (token.IsCancellationRequested)
                     break;
                 await ttsAudioProducer.PlayTtsAsync(chunkAudio, token);
@@ -146,7 +146,7 @@ wakeWordReceiver.OnWakeWordDetected += (userId) =>
 
                 Log.Information("{Name} waked me up!", info.Name);
 
-                var responseAudio = await azureTtsClient.TextToSpeechAsync(info.Name + config.Texts.ResponseAudio);
+                var responseAudio = await doubaoTtsClient.SpeakTextAsync(info.Name + config.Texts.ResponseAudio, speedRate:config.DoubaoTts.Speed);
                 
                 await ttsAudioProducer.PlayTtsAsync(responseAudio);
             }
@@ -174,7 +174,7 @@ client.OnEachTextMessage += (_, message) =>
             return;
         }
         
-        Log.Debug("{Name}: {Message}", message.InvokerName, message.Message);
+        Log.Information("{Name}: {Message}", message.InvokerName, message.Message);
     }
 };
 
