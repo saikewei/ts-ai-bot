@@ -29,7 +29,7 @@ public class LlmClientTests
         const string testAudioPath = "/mnt/d/temp/a.wav"; 
         Assert.True(File.Exists(testAudioPath), $"测试音频文件丢失: {testAudioPath}");
 
-        using var client = new OmniLlmClient(config.ModelApi.Endpoint, config.ModelApi.LlmKey);
+        using var client = new OmniLlmClient(config.ModelApi.Endpoint, config.ModelApi.LlmKey, config.ModelApi.Model);
 
         // Act
         _output.WriteLine($"开始请求模型 {config.ModelApi.Model}，使用文件接口...");
@@ -59,7 +59,7 @@ public class LlmClientTests
         const string testAudioPath = "/mnt/d/temp/a.wav"; 
         Assert.True(File.Exists(testAudioPath), $"测试音频文件丢失: {testAudioPath}");
 
-        using var client = new OmniLlmClient(config.ModelApi.Endpoint, config.ModelApi.LlmKey);
+        using var client = new OmniLlmClient(config.ModelApi.Endpoint, config.ModelApi.LlmKey, config.ModelApi.Model);
 
         _output.WriteLine($"开始请求模型 {config.ModelApi.Model}，使用流式文件接口...");
         

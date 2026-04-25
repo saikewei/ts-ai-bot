@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
+using Serilog;
 
 namespace TS_AI_Bot;
 
@@ -9,13 +10,15 @@ public class OmniLlmClient : IDisposable
 {
     private readonly HttpClient _httpClient;
     private readonly string _endpoint;
+    private readonly string _model;
     private readonly int _maxContextTurns;
     private readonly List<object> _context = [];
     private readonly object _contextLock = new();
 
-    public OmniLlmClient(string endpoint, string apiKey, int maxContextTurns = 10)
+    public OmniLlmClient(string endpoint, string apiKey, string model, int maxContextTurns = 10)
     {
         _endpoint = endpoint;
+        _model = model;
         _maxContextTurns = maxContextTurns;
         _httpClient = new HttpClient();
         _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
@@ -136,8 +139,9 @@ public class OmniLlmClient : IDisposable
         {
             _context.Add(currentUserMsg);
             _context.Add(new { role = "assistant", content = reply ?? string.Empty });
-            TrimContext();
         }
+
+        await CompressContextIfNeededAsync();
 
         return reply ?? string.Empty;
     }
@@ -298,7 +302,77 @@ public class OmniLlmClient : IDisposable
         {
             _context.Add(currentUserMsg);
             _context.Add(new { role = "assistant", content = fullReply.ToString() });
-            TrimContext();
+        }
+
+        await CompressContextIfNeededAsync();
+    }
+
+    private async Task CompressContextIfNeededAsync()
+    {
+        List<object> snapshot;
+        lock (_contextLock)
+        {
+            if (_context.Count <= _maxContextTurns * 2) return;
+            snapshot = [.. _context];
+        }
+
+        Log.Information("Context limit reached, compressing {Turns} turns...", snapshot.Count / 2);
+
+        var compressMessages = new List<object>();
+        compressMessages.AddRange(snapshot);
+        compressMessages.Add(new
+        {
+            role = "user",
+            content = "请将以上所有对话压缩为最小可用上下文（Minimum Viable Context），用于继续对话：\n\n要求：\n- 仅保留影响后续回答的关键信息\n- 删除所有解释性语言和冗余表述\n- 使用极简 bullet points\n- 优先保留：目标、状态、约束、未解决问题\n\n输出格式：\n[目标]\n[当前状态]\n[关键约束]\n[未解决问题]\n\n总长度不超过原内容的20%"
+        });
+
+        var payload = new { model = _model, messages = compressMessages };
+        var jsonString = JsonSerializer.Serialize(payload);
+        using var content = new StringContent(jsonString, Encoding.UTF8, "application/json");
+
+        try
+        {
+            var response = await _httpClient.PostAsync(_endpoint, content);
+            var responseContent = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                Log.Warning("Context compression failed: {StatusCode}", response.StatusCode);
+                lock (_contextLock) { TrimContext(); }
+                return;
+            }
+
+            var startIndex = responseContent.IndexOf('{');
+            var endIndex = responseContent.LastIndexOf('}');
+            if (startIndex < 0 || endIndex < startIndex)
+            {
+                Log.Warning("Context compression returned invalid JSON");
+                lock (_contextLock) { TrimContext(); }
+                return;
+            }
+
+            responseContent = responseContent.Substring(startIndex, endIndex - startIndex + 1);
+            using var jsonDoc = JsonDocument.Parse(responseContent);
+            var summary = jsonDoc.RootElement
+                .GetProperty("choices")[0]
+                .GetProperty("message")
+                .GetProperty("content")
+                .GetString() ?? string.Empty;
+            
+            Log.Debug("Summary: {Summary}", summary);
+
+            lock (_contextLock)
+            {
+                _context.Clear();
+                _context.Add(new { role = "system", content = $"以下是之前对话的摘要：{summary}" });
+            }
+
+            Log.Information("Context compressed to summary: {Summary}...", summary.Length > 300 ? summary[..300] : summary);
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Context compression error: {Ex}", ex.Message);
+            lock (_contextLock) { TrimContext(); }
         }
     }
 

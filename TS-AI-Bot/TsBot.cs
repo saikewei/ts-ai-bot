@@ -42,7 +42,7 @@ public class TsBot : IAsyncDisposable
 
         // 2. 初始化 AI 客户端
         _doubaoTtsClient = new DoubaoTtsClient(_config.DoubaoTts.AppId, _config.DoubaoTts.AccessToken, _config.DoubaoTts.Voice);
-        _llmClient = new OmniLlmClient(_config.ModelApi.Endpoint, _config.ModelApi.LlmKey, _config.ModelApi.MaxContextTurns);
+        _llmClient = new OmniLlmClient(_config.ModelApi.Endpoint, _config.ModelApi.LlmKey, _config.ModelApi.Model, _config.ModelApi.MaxContextTurns);
 
         // 3. 初始化音频组件
         var packetReader = new AudioPacketReader();
