@@ -12,6 +12,7 @@ namespace TS_AI_Bot;
 /// </summary>
 public class WakeWordDetector : IDisposable
 {
+    public DateTime LastActiveTime { get; private set; } = DateTime.UtcNow;
     private ushort UserId { get; }
 
     private readonly Porcupine? _porcupineHandle;
@@ -80,6 +81,7 @@ public class WakeWordDetector : IDisposable
     /// </param>
     public void FeedAudio(Span<byte> stereo48KData)
     {
+        LastActiveTime = DateTime.UtcNow;
         var shorts = MemoryMarshal.Cast<byte, short>(stereo48KData);
 
         // Downsample: take every 6th sample (left channel of stereo)

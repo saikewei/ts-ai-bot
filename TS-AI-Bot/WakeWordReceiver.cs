@@ -15,6 +15,7 @@ public class WakeWordReceiver : IAudioPassiveConsumer, IDisposable
     
     private readonly ConcurrentDictionary<ushort, WakeWordDetector>  _detectors = new();
     private readonly string? _accessKey;
+    private const int DetectorTimeoutSeconds = 300;
 
     private bool _isProcessing;
     
@@ -78,8 +79,33 @@ public class WakeWordReceiver : IAudioPassiveConsumer, IDisposable
         Log.Information("Start listening to user {UserId}.", userId);
     }
     
+    private void CleanupIdleDetectors()
+    {
+        var now = DateTime.UtcNow;
+        var timeout = TimeSpan.FromSeconds(DetectorTimeoutSeconds);
+
+        foreach (var kv in _detectors)
+        {
+            lock (_lockObj)
+            {
+                if (kv.Key == _activeSpeakerId) continue;
+            }
+
+            if (now - kv.Value.LastActiveTime > timeout)
+            {
+                if (_detectors.TryRemove(kv.Key, out var removed))
+                {
+                    removed.OnWaked -= HandleUserWaked;
+                    removed.Dispose();
+                    Log.Information("Removed idle detector for user {UserId}.", kv.Key);
+                }
+            }
+        }
+    }
+
     private async Task MonitorSilenceAsync()
     {
+        int cleanupCounter = 0;
         while (!_cts.IsCancellationRequested)
         {
             await Task.Delay(100);
@@ -92,11 +118,11 @@ public class WakeWordReceiver : IAudioPassiveConsumer, IDisposable
                 if (_activeSpeakerId != null && _silenceTimer?.ElapsedMilliseconds > 2500)
                 {
                     Log.Information("Stop listening.");
-                    
+
                     _isProcessing = true;
                     recordedData = _audioBuffer?.ToArray();
                     finishedUserId = _activeSpeakerId;
-                    
+
                     _activeSpeakerId = null;
                     _audioBuffer?.Dispose();
                     _audioBuffer = null;
@@ -108,6 +134,12 @@ public class WakeWordReceiver : IAudioPassiveConsumer, IDisposable
             if (recordedData != null && finishedUserId != null)
             {
                 OnAudioRecorded?.Invoke(finishedUserId.Value, recordedData);
+            }
+
+            if (++cleanupCounter >= 50)
+            {
+                cleanupCounter = 0;
+                CleanupIdleDetectors();
             }
         }
     }
