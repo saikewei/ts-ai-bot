@@ -2,7 +2,6 @@ using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
-using Serilog;
 
 namespace TS_AI_Bot;
 
@@ -10,13 +9,17 @@ public class OmniLlmClient : IDisposable
 {
     private readonly HttpClient _httpClient;
     private readonly string _endpoint;
-    
-    public OmniLlmClient(string endpoint, string apiKey)
+    private readonly int _maxContextTurns;
+    private readonly List<object> _context = [];
+    private readonly object _contextLock = new();
+
+    public OmniLlmClient(string endpoint, string apiKey, int maxContextTurns = 10)
     {
         _endpoint = endpoint;
+        _maxContextTurns = maxContextTurns;
         _httpClient = new HttpClient();
         _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-        _httpClient.DefaultRequestHeaders.Add("HTTP-Referer", "http://localhost"); 
+        _httpClient.DefaultRequestHeaders.Add("HTTP-Referer", "http://localhost");
         _httpClient.DefaultRequestHeaders.Add("X-Title", "TS-AI-Bot");
     }
     /// <summary>
@@ -65,62 +68,54 @@ public class OmniLlmClient : IDisposable
 
         // 3. 动态获取今天的日期，让模型拥有真正的时间感知
         var currentDate = DateTime.Now.ToString("yyyy年MM月dd日，dddd");
-    
+
         // 4. 纯正的中文 System Prompt（明确要求中文回复）
         var systemPrompt = $"你是MiMo，由小米开发的人工智能助手。今天是：{currentDate}。你的知识截止日期是2024年12月。请始终使用流畅、自然的语言与用户进行交流。";
 
-        // 5. 结构组装 Payload
+        // 5. 组装历史 + 当前消息
+        var messages = new List<object>
+        {
+            new { role = "system", content = systemPrompt }
+        };
+
+        lock (_contextLock)
+        {
+            messages.AddRange(_context);
+        }
+
+        var currentUserMsg = new
+        {
+            role = "user",
+            content = new object[]
+            {
+                new { type = "input_audio", input_audio = new { data = dataUri } },
+                new { type = "text", text = prompt }
+            }
+        };
+        messages.Add(currentUserMsg);
+
+        // 6. 结构组装 Payload
         var requestPayload = new
         {
             model,
-            messages = new object[]
-            {
-                // 插入 System Prompt
-                new
-                {
-                    role = "system",
-                    content = systemPrompt
-                },
-                // 用户的音频与文字混合输入
-                new
-                {
-                    role = "user",
-                    content = new object[]
-                    {
-                        new 
-                        { 
-                            type = "input_audio", 
-                            input_audio = new 
-                            { 
-                                data = dataUri 
-                            } 
-                        },
-                        new 
-                        { 
-                            type = "text", 
-                            text = prompt 
-                        }
-                    }
-                }
-            }
+            messages
         };
 
         var jsonString = JsonSerializer.Serialize(requestPayload);
         using var content = new StringContent(jsonString, Encoding.UTF8, "application/json");
         var response = await _httpClient.PostAsync(_endpoint, content);
         var responseContent = await response.Content.ReadAsStringAsync();
-        
+
         if (!response.IsSuccessStatusCode)
         {
             throw new Exception($"Api request failed! Code: {response.StatusCode}. Message: {responseContent}");
         }
-        
+
         var startIndex = responseContent.IndexOf('{');
         var endIndex = responseContent.LastIndexOf('}');
 
         if (startIndex >= 0 && endIndex >= startIndex)
         {
-            // 强制截取纯正的 JSON 字符串
             responseContent = responseContent.Substring(startIndex, endIndex - startIndex + 1);
         }
         else
@@ -128,15 +123,21 @@ public class OmniLlmClient : IDisposable
             throw new Exception("服务器返回的内容中没有找到有效的 JSON 结构。");
         }
 
-        // 安全解析清洗后的 JSON
         using var jsonDoc = JsonDocument.Parse(responseContent);
 
-        // 提取大模型的回复内容
         var reply = jsonDoc.RootElement
             .GetProperty("choices")[0]
             .GetProperty("message")
             .GetProperty("content")
             .GetString();
+
+        // 7. 记录上下文
+        lock (_contextLock)
+        {
+            _context.Add(currentUserMsg);
+            _context.Add(new { role = "assistant", content = reply ?? string.Empty });
+            TrimContext();
+        }
 
         return reply ?? string.Empty;
     }
@@ -190,10 +191,10 @@ public class OmniLlmClient : IDisposable
     /// 私有核心流式请求方法
     /// </summary>
     private async IAsyncEnumerable<string> SendAudioRequestStreamAsync(
-        string model, 
-        string prompt, 
-        string base64Audio, 
-        string format, 
+        string model,
+        string prompt,
+        string base64Audio,
+        string format,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var mimeType = format.ToLower() switch
@@ -208,54 +209,61 @@ public class OmniLlmClient : IDisposable
         var currentDate = DateTime.Now.ToString("yyyy年MM月dd日，dddd");
         var systemPrompt = $"你是MiMo，由小米开发的人工智能助手。今天是：{currentDate}。你的知识截止日期是2024年12月。请始终使用流畅、自然的语言与用户进行交流。";
 
+        var messages = new List<object>
+        {
+            new { role = "system", content = systemPrompt }
+        };
+
+        lock (_contextLock)
+        {
+            messages.AddRange(_context);
+        }
+
+        var currentUserMsg = new
+        {
+            role = "user",
+            content = new object[]
+            {
+                new { type = "input_audio", input_audio = new { data = dataUri } },
+                new { type = "text", text = prompt }
+            }
+        };
+        messages.Add(currentUserMsg);
+
         var requestPayload = new
         {
             model,
-            stream = true, // 🌟 关键：告诉大模型开启流式传输
-            messages = new object[]
-            {
-                new { role = "system", content = systemPrompt },
-                new
-                {
-                    role = "user",
-                    content = new object[]
-                    {
-                        new { type = "input_audio", input_audio = new { data = dataUri } },
-                        new { type = "text", text = prompt }
-                    }
-                }
-            }
+            stream = true,
+            messages
         };
 
         var jsonString = JsonSerializer.Serialize(requestPayload);
         using var request = new HttpRequestMessage(HttpMethod.Post, _endpoint);
         request.Content = new StringContent(jsonString, Encoding.UTF8, "application/json");
 
-        // 🌟 核心性能优化：ResponseHeadersRead 告诉 HttpClient 只要拿到响应头就开始返回，不要等整个 Body 下载完！
         using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        
+
         if (!response.IsSuccessStatusCode)
         {
             var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
             throw new Exception($"流式 API 请求失败! 状态码: {response.StatusCode}. 详情: {errorContent}");
         }
 
-        // 获取响应流并逐行读取 (Server-Sent Events 标准格式)
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var reader = new StreamReader(stream);
+
+        var fullReply = new StringBuilder();
 
         while (!reader.EndOfStream && !cancellationToken.IsCancellationRequested)
         {
             var line = await reader.ReadLineAsync(cancellationToken);
-            
+
             if (string.IsNullOrWhiteSpace(line)) continue;
-            
-            // SSE 的数据行都是以 "data: " 开头的
+
             if (line.StartsWith("data: "))
             {
                 var data = line.Substring(6).Trim();
-                
-                // 收到结束标志符，退出流
+
                 if (data == "[DONE]") break;
 
                 string chunkText = string.Empty;
@@ -266,8 +274,7 @@ public class OmniLlmClient : IDisposable
                     if (choices.GetArrayLength() > 0)
                     {
                         var delta = choices[0].GetProperty("delta");
-                        
-                        // 🌟 只提取 content (说话内容)，忽略 reasoning_content (思考过程)
+
                         if (delta.TryGetProperty("content", out var contentElement) && contentElement.ValueKind == JsonValueKind.String)
                         {
                             chunkText = contentElement.GetString() ?? string.Empty;
@@ -276,17 +283,42 @@ public class OmniLlmClient : IDisposable
                 }
                 catch (JsonException)
                 {
-                    // 忽略个别不完整的 JSON 块解析异常，保证流不断
                 }
 
                 if (!string.IsNullOrEmpty(chunkText))
                 {
-                    yield return chunkText; // 将解析出的片段实时扔给外部
+                    fullReply.Append(chunkText);
+                    yield return chunkText;
                 }
             }
         }
+
+        // 流结束，记录上下文
+        lock (_contextLock)
+        {
+            _context.Add(currentUserMsg);
+            _context.Add(new { role = "assistant", content = fullReply.ToString() });
+            TrimContext();
+        }
     }
-    
+
+    private void TrimContext()
+    {
+        while (_context.Count > _maxContextTurns * 2)
+        {
+            _context.RemoveAt(0);
+            _context.RemoveAt(0);
+        }
+    }
+
+    public void ClearContext()
+    {
+        lock (_contextLock)
+        {
+            _context.Clear();
+        }
+    }
+
     private static byte[] WrapPcmToWav(byte[] pcmData, int sampleRate, short channels, short bitsPerSample)
     {
         var wavBytes = new byte[44 + pcmData.Length];

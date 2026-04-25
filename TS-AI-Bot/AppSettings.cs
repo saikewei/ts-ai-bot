@@ -30,6 +30,7 @@ public class ModelApiConfig
     public required string LlmKey { get; set; }
     public required string Endpoint { get; set; }
     public required string Model { get; set; }
+    public required int MaxContextTurns { get; set; }
 }
 
 public class TextsConfig

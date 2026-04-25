@@ -13,6 +13,7 @@ ModelApi:
   LlmKey: "Your key"
   Model: "mimo-v2-omni"
   Endpoint: "https://api.xiaomimimo.com/v1/chat/completions"
+  MaxContextTurns: 10
   
 Texts:
   HelloAudio: "我来啦！"
