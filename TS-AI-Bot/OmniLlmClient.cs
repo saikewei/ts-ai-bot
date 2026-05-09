@@ -47,7 +47,7 @@ public class OmniLlmClient : IDisposable
     public async Task<string> AskWithRawPcmAsync(string model, string prompt, byte[] pcmData, int sampleRate = 48000, short channels = 2, short bitsPerSample = 16)
     {
         // 1. 在内存中强行给 PCM 数据戴上一个标准的 WAV 帽子
-        var wavBytes = WrapPcmToWav(pcmData, sampleRate, channels, bitsPerSample);
+        var wavBytes = AudioUtils.WrapPcmToWav(pcmData, sampleRate, channels, bitsPerSample);
         
         // 2. 转为 Base64
         var base64Audio = Convert.ToBase64String(wavBytes);
@@ -158,7 +158,7 @@ public class OmniLlmClient : IDisposable
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // 1. 给 PCM 加上 WAV 头
-        var wavBytes = WrapPcmToWav(pcmData, sampleRate, channels, bitsPerSample);
+        var wavBytes = AudioUtils.WrapPcmToWav(pcmData, sampleRate, channels, bitsPerSample);
         
         // 2. 转为 Base64
         var base64Audio = Convert.ToBase64String(wavBytes);
@@ -393,29 +393,6 @@ public class OmniLlmClient : IDisposable
         }
     }
 
-    private static byte[] WrapPcmToWav(byte[] pcmData, int sampleRate, short channels, short bitsPerSample)
-    {
-        var wavBytes = new byte[44 + pcmData.Length];
-        using var ms = new MemoryStream(wavBytes);
-        using var writer = new BinaryWriter(ms);
-        
-        writer.Write(Encoding.ASCII.GetBytes("RIFF"));
-        writer.Write(36 + pcmData.Length);
-        writer.Write(Encoding.ASCII.GetBytes("WAVE"));
-        writer.Write(Encoding.ASCII.GetBytes("fmt "));
-        writer.Write(16);
-        writer.Write((short)1);
-        writer.Write(channels);
-        writer.Write(sampleRate);
-        writer.Write(sampleRate * channels * bitsPerSample / 8);
-        writer.Write((short)(channels * bitsPerSample / 8));
-        writer.Write(bitsPerSample);
-        writer.Write(Encoding.ASCII.GetBytes("data"));
-        writer.Write(pcmData.Length);
-        writer.Write(pcmData);
-        
-        return wavBytes;
-    }
 
     public void Dispose()
     {

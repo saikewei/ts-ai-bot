@@ -1,6 +1,19 @@
 ﻿FROM mcr.microsoft.com/dotnet/runtime:8.0 AS base
 WORKDIR /app
 
+RUN sed -i 's/deb.debian.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+       python3 \
+       python3-pip \
+       libpython3.11 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# 全局安装 dashscope (使用 --break-system-packages 绕过 Debian 限制)
+RUN pip3 install dashscope --break-system-packages -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 ARG BUILD_CONFIGURATION=Release
 WORKDIR /src

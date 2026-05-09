@@ -7,6 +7,7 @@ public class AppSettings
     public required ModelApiConfig ModelApi { get; set; }
     public required TextsConfig Texts { get; set; }
     public required DoubaoTtsConfig DoubaoTts { get; set; }
+    public required QwenTtsConfig QwenTts { get; set; }
 }
 
 // 对应 Picovoice 节点
@@ -46,4 +47,12 @@ public class DoubaoTtsConfig
     public required string AccessToken { get; set; }
     public required string Voice { get; set; }
     public required float Speed {get; set; }
+}
+
+public class QwenTtsConfig
+{
+    public required string ApiKey { get; set; }
+    public required string BaseUrl { get; set; }
+    public required string Model { get; set; }
+    public required int VoiceSamplingDuration { get; set; }
 }

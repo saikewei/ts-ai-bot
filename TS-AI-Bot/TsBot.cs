@@ -5,6 +5,7 @@ using TSLib.Full;
 using TSLib.Messages;
 using TSLib.Scheduler;
 using System.Collections.Concurrent;
+using Python.Runtime;
 
 namespace TS_AI_Bot;
 
@@ -21,6 +22,9 @@ public class TsBot : IAsyncDisposable
     
     // 音频输出管道
     private readonly TtsAudioProducer _ttsAudioProducer;
+    
+    // 语音克隆客户端
+    private readonly VoiceCloneTtsClient _voiceCloneTtsClient;
 
     // AI 客户端
     private readonly DoubaoTtsClient _doubaoTtsClient;
@@ -31,6 +35,7 @@ public class TsBot : IAsyncDisposable
     private readonly byte[] _beepAudio;
     private byte[]? _helloAudio;
     private readonly ConcurrentDictionary<ushort, byte[]> _responseAudioCache;
+    private string _currentVoice = "default";
 
     public TsBot(AppSettings config)
     {
@@ -47,6 +52,9 @@ public class TsBot : IAsyncDisposable
         // 3. 初始化音频组件
         var packetReader = new AudioPacketReader();
         var decoderPipe = new DecoderPipe();
+        var splitterPipe = new PassiveSplitterPipe();
+        _voiceCloneTtsClient =
+            new VoiceCloneTtsClient(_config.QwenTts.Model, _config.QwenTts.BaseUrl, _config.QwenTts.ApiKey, _config.QwenTts.VoiceSamplingDuration);
         _wakeWordReceiver = new WakeWordReceiver(_config.Picovoice.UsePico ? _config.Picovoice.AccessKey : null);
         
         _ttsAudioProducer = new TtsAudioProducer();
@@ -61,7 +69,9 @@ public class TsBot : IAsyncDisposable
         // 4. 组装音频管道
         _client.OutStream = packetReader;
         packetReader.OutStream = decoderPipe;
-        decoderPipe.OutStream = _wakeWordReceiver;
+        decoderPipe.OutStream = splitterPipe;
+        splitterPipe.Add(_wakeWordReceiver);
+        splitterPipe.Add(_voiceCloneTtsClient);
 
         _ttsAudioProducer.OutStream = volumePipe;
         volumePipe.OutStream = encoderPipe;
@@ -72,6 +82,13 @@ public class TsBot : IAsyncDisposable
         _wakeWordReceiver.OnWakeWordDetected += HandleWakeWordDetected;
         _wakeWordReceiver.OnNewUser += HandleNewUser;
         _client.OnEachTextMessage += HandleTextMessage;
+        
+        Runtime.PythonDLL = "/usr/lib/x86_64-linux-gnu/libpython3.11.so.1.0";
+        if (!PythonEngine.IsInitialized)
+        {
+            PythonEngine.Initialize();
+            PythonEngine.BeginAllowThreads();
+        }
     }
 
     /// <summary>
@@ -228,24 +245,92 @@ public class TsBot : IAsyncDisposable
                         await _client.SendChannelMessage("记忆已清除！");
                     });
                     return;
-                default:
-                    if (clearMessage.StartsWith("#say"))
+                case "#test":
+                    var info = await _client.ClientList();
+                    if (info.Ok)
                     {
-                        clearMessage = clearMessage.Replace("#say", "");
+                        Log.Information("{Name}", info.Value);
+                    }
+                    return;
+                default:
+                    Log.Information("{Name}: {Message}", message.InvokerName, message.Message);
+                    if (clearMessage.StartsWith("#say "))
+                    {
+                        clearMessage = clearMessage.Replace("#say ", "");
                         await _scheduler.InvokeAsync(async () =>
                         {
                             _ttsCts?.Cancel();
                             _ttsCts?.Dispose();
                             _ttsCts = new CancellationTokenSource();
                             var token = _ttsCts.Token;
-                
-                            var audio= await _doubaoTtsClient.SpeakTextAsync(clearMessage, cancellationToken: token, speedRate: _config.DoubaoTts.Speed);
-                            await _ttsAudioProducer.PlayTtsAsync(audio, token);
+
+                            if (_currentVoice == "default")
+                            {
+                                var audio= await _doubaoTtsClient.SpeakTextAsync(clearMessage, cancellationToken: token, speedRate: _config.DoubaoTts.Speed);
+                                await _ttsAudioProducer.PlayTtsAsync(audio, token);
+                            }
+                            else
+                            {
+                                await foreach (var pcmData in _voiceCloneTtsClient.StreamTtsAsync(_currentVoice, clearMessage, token))
+                                {
+                                    if (pcmData.Length > 0)
+                                    {
+                                        await _ttsAudioProducer.PlayTtsAsync(pcmData, token);
+                                    }
+                                }
+                            }
                         });
                         
                         // return;
                     }
-                    Log.Information("{Name}: {Message}", message.InvokerName, message.Message);
+                    else if (clearMessage.StartsWith("#clone "))
+                    {
+                        var speakerName = clearMessage.Replace("#clone ", "");
+                        var speakerId = await GetUserIdFromName(speakerName);
+                        
+                        Log.Information("Start to clone voice from {name}", speakerName);
+                        await _voiceCloneTtsClient.CreateVoiceAsync(speakerId, speakerName); await _scheduler.InvokeAsync(async () =>
+                        {
+                            await _client.SendChannelMessage("声音已克隆！");
+                        });
+                    }
+                    else if (clearMessage.StartsWith("#voice "))
+                    {
+                        var voiceName = clearMessage.Replace("#voice ", "");
+                        try
+                        {
+                            if (voiceName == "default")
+                            {
+                                await _scheduler.InvokeAsync(async () =>
+                                {
+                                    await _client.SendChannelMessage($"已切换至{voiceName}音色");
+                                });
+                                _currentVoice = voiceName;
+                                return;
+                            }
+
+                            if (_voiceCloneTtsClient.IsSpeakerExisted(voiceName))
+                            {
+                                _ = await GetUserIdFromName(voiceName);
+                                _currentVoice = voiceName;
+                                await _scheduler.InvokeAsync(async () =>
+                                {
+                                    await _client.SendChannelMessage($"已切换至{voiceName}音色");
+                                });
+                            }
+                            else
+                            {
+                                await _scheduler.InvokeAsync(async () =>
+                                {
+                                    await _client.SendChannelMessage($"需要先创建{voiceName}的音色");
+                                });
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Error("Fail to handle voice message: {Exception}", ex);
+                        }
+                    }
                     break;
             }
         }
@@ -268,7 +353,7 @@ public class TsBot : IAsyncDisposable
                     
                 _responseAudioCache.TryAdd(userId, responseAudio);
                 
-                Log.Information("Cached response audio for user {Name}", name);
+                Log.Information("Cached response audio for user {Id} {Name}", userId, name);
             }
             catch(Exception ex)
             {
@@ -279,7 +364,6 @@ public class TsBot : IAsyncDisposable
 
     private async Task<string> GetNameFromUserId(ushort userId)
     {
-        
         var clientId = ClientId.To(userId);
         var infoResult = await _client.ClientInfo(clientId);
 
@@ -289,7 +373,23 @@ public class TsBot : IAsyncDisposable
         }
 
         throw new Exception(infoResult.Error.Message);
-    } 
+    }
+
+    private async Task<ushort> GetUserIdFromName(string name)
+    {
+        var info = await _client.ClientList();
+        if (!info.Ok) throw new Exception(info.Error.Message);
+        foreach (var clientInfo in info.Value)
+        {
+            if (clientInfo.Name == name) return clientInfo.ClientId.Value;
+        }
+
+        await _scheduler.InvokeAsync(async () =>
+        {
+            await _client.SendChannelMessage("用户名不存在！");
+        });
+        throw new Exception("Cannot find the name");
+    }
 
     /// <summary>
     /// 安全关闭机器人并释放资源
@@ -312,6 +412,7 @@ public class TsBot : IAsyncDisposable
                 _doubaoTtsClient.Dispose();
                 _llmClient.Dispose();
                 _ttsCts?.Dispose();
+                _voiceCloneTtsClient.Dispose();
             }
             catch (Exception ex)
             {
