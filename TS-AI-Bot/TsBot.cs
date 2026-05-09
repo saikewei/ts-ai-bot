@@ -206,17 +206,52 @@ public class TsBot : IAsyncDisposable
         }); 
     }
 
-    private void HandleTextMessage(object? sender, TextMessage message)
+    private async void HandleTextMessage(object? sender, TextMessage message)
     {
-        if (message.Target == TextMessageTargetMode.Channel)
+        try
         {
-            if (message.Message.Trim().ToLower() == "#stop")
+            if (message.Target != TextMessageTargetMode.Channel) return;
+
+            var clearMessage = message.Message.Trim().ToLower();
+            switch (clearMessage)
             {
-                Log.Information("{Name} shut me up.", message.InvokerName);
-                _ttsCts?.Cancel();
-                return;
+                case "#stop":
+                    Log.Information("{Name} shut me up.", message.InvokerName);
+                    _ttsCts?.Cancel();
+                    return;
+                case "#clear":
+                    Log.Information("{Name} clear my memory.", message.InvokerName);
+                    _llmClient.ClearContext();
+
+                    await _scheduler.InvokeAsync(async () =>
+                    {
+                        await _client.SendChannelMessage("记忆已清除！");
+                    });
+                    return;
+                default:
+                    if (clearMessage.StartsWith("#say"))
+                    {
+                        clearMessage = clearMessage.Replace("#say", "");
+                        await _scheduler.InvokeAsync(async () =>
+                        {
+                            _ttsCts?.Cancel();
+                            _ttsCts?.Dispose();
+                            _ttsCts = new CancellationTokenSource();
+                            var token = _ttsCts.Token;
+                
+                            var audio= await _doubaoTtsClient.SpeakTextAsync(clearMessage, cancellationToken: token, speedRate: _config.DoubaoTts.Speed);
+                            await _ttsAudioProducer.PlayTtsAsync(audio, token);
+                        });
+                        
+                        // return;
+                    }
+                    Log.Information("{Name}: {Message}", message.InvokerName, message.Message);
+                    break;
             }
-            Log.Information("{Name}: {Message}", message.InvokerName, message.Message);
+        }
+        catch(Exception ex)
+        {
+            Log.Error("Fail to handle the message: {Exception}", ex);
         }
     }
 
@@ -252,10 +287,8 @@ public class TsBot : IAsyncDisposable
         {
             return infoResult.Value.Name;
         }
-        else
-        {
-            throw new Exception(infoResult.Error.Message);
-        }
+
+        throw new Exception(infoResult.Error.Message);
     } 
 
     /// <summary>
