@@ -27,6 +27,7 @@ public class VoiceCloneTtsClient(string model, string baseUrl, string apiKey, in
     private static readonly HttpClient Client = new();
     
     private readonly Dictionary<string, VoiceInfo> _createdVoices = new();
+    public IReadOnlyCollection<string> SpeakerNames => _createdVoices.Keys;
 
     public void Write(Span<byte> data, Meta? meta)
     {

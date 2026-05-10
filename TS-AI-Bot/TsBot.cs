@@ -229,7 +229,7 @@ public class TsBot : IAsyncDisposable
         {
             if (message.Target != TextMessageTargetMode.Channel) return;
 
-            var clearMessage = message.Message.Trim().ToLower();
+            var clearMessage = message.Message;
             switch (clearMessage)
             {
                 case "#stop":
@@ -251,6 +251,24 @@ public class TsBot : IAsyncDisposable
                     {
                         Log.Information("{Name}", info.Value);
                     }
+                    return;
+                case "#list":
+                    var names =await GetAllUserName();
+                    var messageToShow = "|" + string.Join("|", names) + "|";
+
+                    await _scheduler.InvokeAsync(async () =>
+                    {
+                        await _client.SendChannelMessage(messageToShow);
+                    });
+                    return;
+                case "#list voice":
+                    var namesToShow = "|" + string.Join("|", _voiceCloneTtsClient.SpeakerNames) + "|";
+                    
+                    await _scheduler.InvokeAsync(async () =>
+                    {
+                        await _client.SendChannelMessage("目前已克隆的用户：" + namesToShow);
+                    });
+
                     return;
                 default:
                     Log.Information("{Name}: {Message}", message.InvokerName, message.Message);
@@ -389,6 +407,15 @@ public class TsBot : IAsyncDisposable
             await _client.SendChannelMessage("用户名不存在！");
         });
         throw new Exception("Cannot find the name");
+    }
+
+    private async Task<List<string>> GetAllUserName()
+    {
+        var info = await _client.ClientList();
+        if (!info.Ok) throw new Exception(info.Error.Message);
+        var result = info.Value.Select(clientInfo => clientInfo.Name).ToList();
+        
+        return result;
     }
 
     /// <summary>
