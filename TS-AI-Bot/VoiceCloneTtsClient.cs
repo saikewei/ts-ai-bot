@@ -148,7 +148,8 @@ public class VoiceCloneTtsClient(string model, string baseUrl, string apiKey, in
                     {
                         var raw24K = Convert.FromBase64String(base64);
                         var upsampled48K = AudioUtils.Resample24KTo48K(raw24K);
-                        yield return upsampled48K;
+                        var louderSample = AudioUtils.AdjustVolume(upsampled48K, 2.0f);
+                        yield return louderSample;
                         await Task.Yield();
                     }
                 }
@@ -159,7 +160,6 @@ public class VoiceCloneTtsClient(string model, string baseUrl, string apiKey, in
             }
         }
     }
-
     public bool IsSpeakerExisted(string speakerName)
     {
         return _createdVoices.ContainsKey(speakerName);
