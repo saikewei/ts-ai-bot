@@ -109,7 +109,7 @@ public class VoiceCloneTtsClient(string model, string baseUrl, string apiKey, in
                 .GetProperty("voice")
                 .GetString() ?? throw new Exception("Voice 字段为空");
             Log.Information("Voice created for {speakerId}", speakerId);
-            _createdVoices.Add(speakerName, new VoiceInfo(speakerId, voice));
+            _createdVoices[speakerName] = new VoiceInfo(speakerId, voice);
         }
         catch (Exception e)
         {
