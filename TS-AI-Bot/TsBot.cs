@@ -304,50 +304,41 @@ public class TsBot : IAsyncDisposable
                     else if (clearMessage.StartsWith("#clone "))
                     {
                         var speakerName = clearMessage.Replace("#clone ", "");
-                        var speakerId = await GetUserIdFromName(speakerName);
-                        
-                        Log.Information("Start to clone voice from {name}", speakerName);
-                        await _voiceCloneTtsClient.CreateVoiceAsync(speakerId, speakerName); await _scheduler.InvokeAsync(async () =>
+                        try
                         {
-                            await _client.SendChannelMessage("声音已克隆！");
-                        });
+                            var speakerId = await GetUserIdFromName(speakerName);
+                            Log.Information("Start to clone voice from {name}", speakerName);
+                            await _voiceCloneTtsClient.CreateVoiceAsync(speakerId, speakerName); await _scheduler.InvokeAsync(async () =>
+                            {
+                                await _client.SendChannelMessage("声音已克隆！");
+                            });
+                        }
+                        catch (KeyNotFoundException)
+                        {
+                            await _scheduler.InvokeAsync(async () =>
+                            {
+                                await _client.SendChannelMessage("用户名不存在！");
+                            });
+                        }
                     }
                     else if (clearMessage.StartsWith("#voice "))
                     {
                         var voiceName = clearMessage.Replace("#voice ", "");
-                        try
+                        if (voiceName != "default" && !_voiceCloneTtsClient.SpeakerNames.Contains(voiceName))
                         {
-                            if (voiceName == "default")
+                            await _scheduler.InvokeAsync(async () =>
                             {
-                                await _scheduler.InvokeAsync(async () =>
-                                {
-                                    await _client.SendChannelMessage($"已切换至{voiceName}音色");
-                                });
-                                _currentVoice = voiceName;
-                                return;
-                            }
+                                await _client.SendChannelMessage($"需要先创建{voiceName}的音色");
+                            });
 
-                            if (_voiceCloneTtsClient.IsSpeakerExisted(voiceName))
-                            {
-                                _ = await GetUserIdFromName(voiceName);
-                                _currentVoice = voiceName;
-                                await _scheduler.InvokeAsync(async () =>
-                                {
-                                    await _client.SendChannelMessage($"已切换至{voiceName}音色");
-                                });
-                            }
-                            else
-                            {
-                                await _scheduler.InvokeAsync(async () =>
-                                {
-                                    await _client.SendChannelMessage($"需要先创建{voiceName}的音色");
-                                });
-                            }
+                            return;
                         }
-                        catch (Exception ex)
+                        
+                        _currentVoice = voiceName;
+                        await _scheduler.InvokeAsync(async () =>
                         {
-                            Log.Error("Fail to handle voice message: {Exception}", ex);
-                        }
+                            await _client.SendChannelMessage($"已切换至{voiceName}音色");
+                        });
                     }
                     break;
             }
@@ -355,6 +346,10 @@ public class TsBot : IAsyncDisposable
         catch(Exception ex)
         {
             Log.Error("Fail to handle the message: {Exception}", ex);
+            await _scheduler.InvokeAsync(async () =>
+            {
+                await _client.SendChannelMessage($"处理消息出错了！{ex.Message}");
+            });
         }
     }
 
@@ -402,11 +397,7 @@ public class TsBot : IAsyncDisposable
             if (clientInfo.Name == name) return clientInfo.ClientId.Value;
         }
 
-        await _scheduler.InvokeAsync(async () =>
-        {
-            await _client.SendChannelMessage("用户名不存在！");
-        });
-        throw new Exception("Cannot find the name");
+        throw new KeyNotFoundException("Cannot find the name");
     }
 
     private async Task<List<string>> GetAllUserName()

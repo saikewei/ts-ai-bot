@@ -5,16 +5,83 @@ using System.Text.Json;
 using Python.Runtime;
 using Serilog;
 using TSLib.Audio;
+using YamlDotNet.Core;
+using YamlDotNet.Serialization;
 
 namespace TS_AI_Bot;
 
 public class VoiceCloneTtsClient(string model, string baseUrl, string apiKey, int durationSeconds = 7) : IAudioPassiveConsumer, IDisposable
 {
+    private class VoiceManager
+    {
+        public IReadOnlyCollection<string> SpeakerNames => _createdVoices?.Keys as IReadOnlyCollection<string> ?? [];
+        private Dictionary<string, string>? _createdVoices;
+        private readonly IDeserializer _deserializer = new DeserializerBuilder().WithDuplicateKeyChecking().Build();
+        private readonly ISerializer _serializer = new SerializerBuilder().Build();
+
+        private const string FilePath = "voice.yaml";
+        public VoiceManager()
+        {
+            CheckFileExistence();
+            LoadFromFile();
+        }
+        private static void CheckFileExistence()
+        {
+            if (File.Exists(FilePath)) return;
+            
+            Log.Information("Creating voice.yaml");
+            File.Create(FilePath).Close();
+        }
+
+        public string GetVoiceIdFromSpeakerName(string speakerName)
+        {
+            CheckFileExistence();
+            LoadFromFile();
+            
+            return _createdVoices == null ? throw new KeyNotFoundException("No voice ids were found.") : _createdVoices[speakerName];
+        }
+        
+        public void AddVoiceId(string speakerName, string id)
+        {
+            CheckFileExistence();
+            _createdVoices ??= new Dictionary<string, string>();
+            _createdVoices[speakerName] = id;
+
+            try
+            {
+                var yamlContent = _serializer.Serialize(_createdVoices);
+                File.WriteAllText(FilePath, yamlContent, Encoding.UTF8);
+                Log.Information("Created voice for {speakerName}", speakerName);
+            }
+            catch (Exception ex)
+            {
+                Log.Error("Error occured when saving voice: {ex}", ex.Message);
+            }
+        }
+
+        private void LoadFromFile()
+        {
+            try
+            {
+                var yamlContent = File.ReadAllText(FilePath);
+                _createdVoices = _deserializer.Deserialize<Dictionary<string, string>>(yamlContent);
+            }
+            catch (YamlException ex)
+            {
+                Log.Error("Yaml error: line {line}, {column}\n Reason: {reason}",
+                    ex.Start.Line,
+                    ex.Start.Column,
+                    ex.InnerException != null ? ex.InnerException.Message : ex.Message);
+            }
+            catch (Exception ex)
+            {
+                Log.Error("Error occured when loading voice id: {ex}", ex.Message);
+            }
+        }
+    }
     public bool Active { get; private set; }
 
     public ushort? ActiveSpeakerId;
-
-    public record VoiceInfo(ushort SpeakerId, string VoiceId);
 
     private readonly MemoryStream _audioBuffer = new();
     private readonly object _lockObj = new();
@@ -25,9 +92,9 @@ public class VoiceCloneTtsClient(string model, string baseUrl, string apiKey, in
     private TaskCompletionSource? _completionSource;
     
     private static readonly HttpClient Client = new();
-    
-    private readonly Dictionary<string, VoiceInfo> _createdVoices = new();
-    public IReadOnlyCollection<string> SpeakerNames => _createdVoices.Keys;
+
+    private readonly VoiceManager _voiceManager = new();
+    public IReadOnlyCollection<string> SpeakerNames => _voiceManager.SpeakerNames;
 
     public void Write(Span<byte> data, Meta? meta)
     {
@@ -110,7 +177,7 @@ public class VoiceCloneTtsClient(string model, string baseUrl, string apiKey, in
                 .GetProperty("voice")
                 .GetString() ?? throw new Exception("Voice 字段为空");
             Log.Information("Voice created for {speakerId}", speakerId);
-            _createdVoices[speakerName] = new VoiceInfo(speakerId, voice);
+            _voiceManager.AddVoiceId(speakerName, voice);
         }
         catch (Exception e)
         {
@@ -132,7 +199,7 @@ public class VoiceCloneTtsClient(string model, string baseUrl, string apiKey, in
                 model: model,
                 api_key: apiKey,
                 text: text,
-                voice: _createdVoices[speakerName].VoiceId,
+                voice: _voiceManager.GetVoiceIdFromSpeakerName(speakerName),
                 stream: true
             );
 
@@ -159,10 +226,6 @@ public class VoiceCloneTtsClient(string model, string baseUrl, string apiKey, in
                 }
             }
         }
-    }
-    public bool IsSpeakerExisted(string speakerName)
-    {
-        return _createdVoices.ContainsKey(speakerName);
     }
     public void Dispose()
     {
