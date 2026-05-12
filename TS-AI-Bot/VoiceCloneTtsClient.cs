@@ -12,7 +12,7 @@ using File = System.IO.File;
 
 namespace TS_AI_Bot;
 
-public class VoiceCloneTtsClient(string model, string baseUrl, string apiKey, int durationSeconds = 7) : IAudioPassiveConsumer, IDisposable
+public class VoiceCloneTtsClient(string model, string baseUrl, string apiKey, int durationSeconds = 7, int timeoutSeconds = 100) : IAudioPassiveConsumer, IDisposable
 {
     private class VoiceManager
     {
@@ -117,7 +117,7 @@ public class VoiceCloneTtsClient(string model, string baseUrl, string apiKey, in
         }
     }
 
-    public async Task CreateVoiceAsync(ushort speakerId, string speakerName)
+    public async Task CreateVoiceAsync(ushort speakerId, string speakerName, CancellationToken cancellationToken = default)
     {
         lock (_lockObj)
         {
@@ -132,8 +132,21 @@ public class VoiceCloneTtsClient(string model, string baseUrl, string apiKey, in
             _bytesReceived = 0;
             _audioBuffer.SetLength(0);
         }
-        
-        await _completionSource.Task;
+
+        try
+        {
+            await _completionSource.Task.WaitAsync(TimeSpan.FromSeconds(timeoutSeconds), cancellationToken);
+        }
+        catch (Exception) 
+        {
+            lock (_lockObj)
+            {
+                Active = false;
+                ActiveSpeakerId = null;
+            }
+
+            throw;
+        }
 
         var wavBytes = AudioUtils.WrapPcmToWav(_audioBuffer.ToArray(), 48000, 2, 16);
         
@@ -177,13 +190,13 @@ public class VoiceCloneTtsClient(string model, string baseUrl, string apiKey, in
             var voice = jsonDoc.RootElement
                 .GetProperty("output")
                 .GetProperty("voice")
-                .GetString() ?? throw new Exception("Voice 字段为空");
+                .GetString() ?? throw new Exception("Voice is empty");
             Log.Information("Voice created for {speakerId}", speakerId);
             _voiceManager.AddVoiceId(speakerName, voice);
         }
         catch (Exception e)
         {
-            throw new Exception($"解析 voice 响应失败: {e.Message}");
+            throw new Exception($"Fail to analyze voice: {e.Message}");
         }
     }
     public async IAsyncEnumerable<byte[]> StreamTtsAsync(string speakerName, string text, [EnumeratorCancellation]CancellationToken cancellationToken = default)

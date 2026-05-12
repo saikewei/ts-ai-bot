@@ -55,4 +55,5 @@ public class QwenTtsConfig
     public required string BaseUrl { get; set; }
     public required string Model { get; set; }
     public required int VoiceSamplingDuration { get; set; }
+    public required int VoiceSamplingTimeout { get; set; }
 }

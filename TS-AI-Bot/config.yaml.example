@@ -31,3 +31,4 @@ QwenTts:
   Model: "qwen3-tts-vc-2026-01-22"
   BaseUrl: "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization"
   VoiceSamplingDuration: 10
+  VoiceSamplingTimeout: 120

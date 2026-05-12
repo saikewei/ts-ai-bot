@@ -54,7 +54,7 @@ public class TsBot : IAsyncDisposable
         var decoderPipe = new DecoderPipe();
         var splitterPipe = new PassiveSplitterPipe();
         _voiceCloneTtsClient =
-            new VoiceCloneTtsClient(_config.QwenTts.Model, _config.QwenTts.BaseUrl, _config.QwenTts.ApiKey, _config.QwenTts.VoiceSamplingDuration);
+            new VoiceCloneTtsClient(_config.QwenTts.Model, _config.QwenTts.BaseUrl, _config.QwenTts.ApiKey, _config.QwenTts.VoiceSamplingDuration, _config.QwenTts.VoiceSamplingTimeout);
         _wakeWordReceiver = new WakeWordReceiver(_config.Picovoice.UsePico ? _config.Picovoice.AccessKey : null);
         
         _ttsAudioProducer = new TtsAudioProducer();
@@ -83,7 +83,7 @@ public class TsBot : IAsyncDisposable
         _wakeWordReceiver.OnNewUser += HandleNewUser;
         _client.OnEachTextMessage += HandleTextMessage;
         
-        Runtime.PythonDLL = "/usr/lib/x86_64-linux-gnu/libpython3.11.so.1.0";
+        Runtime.PythonDLL = "/usr/lib/x86_64-linux-gnu/libpython3.12.so.1.0";
         if (!PythonEngine.IsInitialized)
         {
             PythonEngine.Initialize();
@@ -314,19 +314,26 @@ public class TsBot : IAsyncDisposable
                         var speakerName = clearMessage.Replace("#clone ", "");
                         try
                         {
+
+                            _ttsCts?.Cancel();
+                            _ttsCts?.Dispose();
+                            _ttsCts = new CancellationTokenSource();
+                            var token = _ttsCts.Token;
+
                             var speakerId = await GetUserIdFromName(speakerName);
                             Log.Information("Start to clone voice from {name}", speakerName);
-                            await _voiceCloneTtsClient.CreateVoiceAsync(speakerId, speakerName); await _scheduler.InvokeAsync(async () =>
-                            {
-                                await _client.SendChannelMessage("声音已克隆！");
-                            });
+                            await _scheduler.InvokeAsync(async () => { await _client.SendChannelMessage("声音开始克隆！"); });
+                            await _voiceCloneTtsClient.CreateVoiceAsync(speakerId, speakerName, token);
+                            await _scheduler.InvokeAsync(async () => { await _client.SendChannelMessage("声音已克隆！"); });
                         }
                         catch (KeyNotFoundException)
                         {
-                            await _scheduler.InvokeAsync(async () =>
-                            {
-                                await _client.SendChannelMessage("用户名不存在！");
-                            });
+                            await _scheduler.InvokeAsync(async () => { await _client.SendChannelMessage("用户名不存在！"); });
+                        }
+                        catch (Exception ex) when (ex is OperationCanceledException or TimeoutException)
+                        {
+                            Log.Information(ex, "Stop the clone");
+                            await _scheduler.InvokeAsync(async () => { await _client.SendChannelMessage("克隆终止！"); });
                         }
                     }
                     else if (clearMessage.StartsWith("#voice "))
@@ -353,7 +360,7 @@ public class TsBot : IAsyncDisposable
         }
         catch(Exception ex)
         {
-            Log.Error("Fail to handle the message: {Exception}", ex);
+            Log.Error(ex, "Fail to handle the message");
             await _scheduler.InvokeAsync(async () =>
             {
                 await _client.SendChannelMessage($"处理消息出错了！{ex.Message}");
