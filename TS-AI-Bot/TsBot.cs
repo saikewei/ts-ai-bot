@@ -83,7 +83,8 @@ public class TsBot : IAsyncDisposable
         _wakeWordReceiver.OnNewUser += HandleNewUser;
         _client.OnEachTextMessage += HandleTextMessage;
         
-        Runtime.PythonDLL = "/usr/lib/x86_64-linux-gnu/libpython3.12.so.1.0";
+        bool isRunningInDocker = Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER") == "true";
+        Runtime.PythonDLL = isRunningInDocker ? "/usr/lib/x86_64-linux-gnu/libpython3.11.so.1.0" : "/usr/lib/x86_64-linux-gnu/libpython3.12.so.1.0";
         if (!PythonEngine.IsInitialized)
         {
             PythonEngine.Initialize();
