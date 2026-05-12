@@ -289,12 +289,20 @@ public class TsBot : IAsyncDisposable
                             }
                             else
                             {
-                                await foreach (var pcmData in _voiceCloneTtsClient.StreamTtsAsync(_currentVoice, clearMessage, token))
+                                try
                                 {
-                                    if (pcmData.Length > 0)
+                                    await foreach (var pcmData in _voiceCloneTtsClient.StreamTtsAsync(_currentVoice,
+                                                       clearMessage, token))
                                     {
-                                        await _ttsAudioProducer.PlayTtsAsync(pcmData, token);
+                                        if (pcmData.Length > 0)
+                                        {
+                                            await _ttsAudioProducer.PlayTtsAsync(pcmData, token);
+                                        }
                                     }
+                                }
+                                catch (TaskCanceledException)
+                                {
+                                    Log.Information("Stop streaming tts");
                                 }
                             }
                         });

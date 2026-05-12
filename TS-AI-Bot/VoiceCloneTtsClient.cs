@@ -7,6 +7,8 @@ using Serilog;
 using TSLib.Audio;
 using YamlDotNet.Core;
 using YamlDotNet.Serialization;
+using Channel = System.Threading.Channels.Channel;
+using File = System.IO.File;
 
 namespace TS_AI_Bot;
 
@@ -186,45 +188,62 @@ public class VoiceCloneTtsClient(string model, string baseUrl, string apiKey, in
     }
     public async IAsyncEnumerable<byte[]> StreamTtsAsync(string speakerName, string text, [EnumeratorCancellation]CancellationToken cancellationToken = default)
     {
-        await Task.Yield();
+        var channel = Channel.CreateUnbounded<byte[]>();
 
-        using (Py.GIL())
+        _ = Task.Run(() =>
         {
-            // 直接导入原生 SDK
-            dynamic dashscope = Py.Import("dashscope");
-            dashscope.base_http_api_url = "https://dashscope.aliyuncs.com/api/v1";
-
-            // 直接发起流式调用
-            dynamic response = dashscope.MultiModalConversation.call(
-                model: model,
-                api_key: apiKey,
-                text: text,
-                voice: _voiceManager.GetVoiceIdFromSpeakerName(speakerName),
-                stream: true
-            );
-
-            // 3. 迭代 Python 生成器
-            foreach (dynamic chunk in response)
+            try
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (chunk.status_code == 200)
+                using (Py.GIL())
                 {
-                    // 解析 Base64 数据并返回字节数组
-                    string? base64 = chunk.output.audio?.data.ToString();
-                    if (!string.IsNullOrEmpty(base64))
+                    // 直接导入原生 SDK
+                    dynamic dashscope = Py.Import("dashscope");
+                    dashscope.base_http_api_url = "https://dashscope.aliyuncs.com/api/v1";
+
+                    // 直接发起流式调用
+                    dynamic response = dashscope.MultiModalConversation.call(
+                        model: model,
+                        api_key: apiKey,
+                        text: text,
+                        voice: _voiceManager.GetVoiceIdFromSpeakerName(speakerName),
+                        stream: true
+                    );
+
+                    // 3. 迭代 Python 生成器
+                    foreach (dynamic chunk in response)
                     {
-                        var raw24K = Convert.FromBase64String(base64);
-                        var upsampled48K = AudioUtils.Resample24KTo48K(raw24K);
-                        var louderSample = AudioUtils.AdjustVolume(upsampled48K, 2.0f);
-                        yield return louderSample;
-                        await Task.Yield();
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if (chunk.status_code == 200)
+                        {
+                            // 解析 Base64 数据并返回字节数组
+                            string? base64 = chunk.output.audio?.data.ToString();
+                            if (!string.IsNullOrEmpty(base64))
+                            {
+                                var raw24K = Convert.FromBase64String(base64);
+                                var upsampled48K = AudioUtils.Resample24KTo48K(raw24K);
+                                var louderSample = AudioUtils.AdjustVolume(upsampled48K, 2.0f);
+                                channel.Writer.TryWrite(louderSample);
+                            }
+                        }
+                        else
+                        {
+                            channel.Writer.Complete(new Exception($"DashScope Error: {chunk.message}"));
+                            return;
+                        }
                     }
                 }
-                else
-                {
-                    throw new Exception($"DashScope Error: {chunk.message}");
-                }
+
+                channel.Writer.Complete();
             }
+            catch (Exception ex)
+            {
+                channel.Writer.TryComplete(ex);
+            }
+        }, cancellationToken);
+
+        await foreach (var chunk in channel.Reader.ReadAllAsync(cancellationToken))
+        {
+            yield return chunk;
         }
     }
     public void Dispose()
