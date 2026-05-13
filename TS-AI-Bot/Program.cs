@@ -9,7 +9,9 @@ Log.Logger = new LoggerConfiguration().MinimumLevel.Information().WriteTo
     .CreateLogger();
 
 // 2. 读取配置
-var yamlContent = File.ReadAllText("config.yaml");
+var yamlContent = File.ReadAllText(Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER") == "true"
+    ? "data/config.yaml"
+    : "config.yaml");
 var deserializer = new DeserializerBuilder().WithNamingConvention(PascalCaseNamingConvention.Instance).Build();
 var config = deserializer.Deserialize<AppSettings>(yamlContent);
 Log.Information("Config loaded!");

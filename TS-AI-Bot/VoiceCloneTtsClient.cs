@@ -12,16 +12,31 @@ using File = System.IO.File;
 
 namespace TS_AI_Bot;
 
-public class VoiceCloneTtsClient(string model, string baseUrl, string apiKey, int durationSeconds = 7, int timeoutSeconds = 100) : IAudioPassiveConsumer, IDisposable
+public class VoiceCloneTtsClient(
+    string model,
+    string baseUrl,
+    string apiKey,
+    int durationSeconds = 7,
+    int timeoutSeconds = 100) : IAudioPassiveConsumer, IDisposable
 {
     private class VoiceManager
     {
-        public IReadOnlyCollection<string> SpeakerNames => _createdVoices?.Keys as IReadOnlyCollection<string> ?? [];
+        public IReadOnlyCollection<string> SpeakerNames {
+            get
+            {
+                CheckFileExistence();
+                LoadFromFile();
+                return _createdVoices?.Keys as IReadOnlyCollection<string> ?? [];
+            }
+        } 
         private Dictionary<string, string>? _createdVoices;
         private readonly IDeserializer _deserializer = new DeserializerBuilder().WithDuplicateKeyChecking().Build();
         private readonly ISerializer _serializer = new SerializerBuilder().Build();
 
-        private const string FilePath = "voice.yaml";
+        private static readonly string FilePath =
+            Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER") == "true"
+                ? "data/voice.yaml"
+                : "voice.yaml";
         public VoiceManager()
         {
             CheckFileExistence();
