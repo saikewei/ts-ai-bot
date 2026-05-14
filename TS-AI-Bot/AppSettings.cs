@@ -8,6 +8,7 @@ public class AppSettings
     public required TextsConfig Texts { get; set; }
     public required DoubaoTtsConfig DoubaoTts { get; set; }
     public required QwenTtsConfig QwenTts { get; set; }
+    public required WebServerConfig WebServer { get; set; }
 }
 
 // 对应 Picovoice 节点
@@ -56,4 +57,11 @@ public class QwenTtsConfig
     public required string Model { get; set; }
     public required int VoiceSamplingDuration { get; set; }
     public required int VoiceSamplingTimeout { get; set; }
+}
+
+public class WebServerConfig
+{
+    public required string LoginUrl { get; set; }
+    public required string JwtSecretKey{ get; set; }
+    
 }
