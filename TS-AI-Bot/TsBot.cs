@@ -543,12 +543,13 @@ public class TsBot : IAsyncDisposable
         _webApplication = builder.Build();
 
         _webApplication.UseCors("LocalDevPolicy");
+        _webApplication.UseDefaultFiles();
+        _webApplication.UseStaticFiles();
         _webApplication.UseAuthentication();
         _webApplication.UseAuthorization();
         
-        //TODO: mount static front page
-        
         SetWebApi(); 
+        _webApplication.MapFallbackToFile("index.html");
         _ = _webApplication.RunAsync("http://0.0.0.0:5000");
         Log.Information("Web server started");
     }
