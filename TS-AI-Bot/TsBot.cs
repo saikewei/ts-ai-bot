@@ -523,18 +523,33 @@ public class TsBot : IAsyncDisposable
                     IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtSecretKey))
                 };
             });
+        builder.Services.AddCors(options =>
+        {
+            options.AddPolicy("LocalDevPolicy", policy =>
+            {
+                policy.SetIsOriginAllowed(origin =>
+                    {
+                        var host = new Uri(origin).Host;
+                        return host == "localhost" || host == "127.0.0.1" || host.StartsWith("100.");
+                    })
+                    .AllowAnyHeader()
+                    .AllowAnyMethod()
+                    .AllowCredentials();
+            });
+        });
             
         builder.Services.AddAuthorization(); //
         
         _webApplication = builder.Build();
 
+        _webApplication.UseCors("LocalDevPolicy");
         _webApplication.UseAuthentication();
         _webApplication.UseAuthorization();
         
         //TODO: mount static front page
         
         SetWebApi(); 
-        _ = _webApplication.RunAsync();
+        _ = _webApplication.RunAsync("http://0.0.0.0:5000");
         Log.Information("Web server started");
     }
 
@@ -579,7 +594,7 @@ public class TsBot : IAsyncDisposable
                 
                 return Results.Ok(new { Message = "Ticket is valid.", Token = jwtToken });
             }
-            return Results.Unauthorized();
+            return Results.Forbid();
         });
     }
 
