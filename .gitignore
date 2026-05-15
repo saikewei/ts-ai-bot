@@ -54,3 +54,7 @@ Thumbs.db
 # ==========================================
 *.log
 logs/
+
+web/node_modules
+node_modules
+.vscode
